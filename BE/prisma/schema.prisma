@@ -1,0 +1,100 @@
+generator client {
+  provider     = "prisma-client-js"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  media     Media[]
+  albums    Album[]
+  tags      Tag[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Media {
+  id                String      @id @default(cuid())
+  ownerId           String
+  cloudinaryAssetId String      @unique
+  publicId          String      @unique
+  originalFilename  String
+  mimeType          String
+  mediaType         MediaType
+  bytes             Int
+  width             Int?
+  height            Int?
+  duration          Float?
+  takenAt           DateTime?
+  latitude          Float?
+  longitude         Float?
+  status            MediaStatus @default(READY)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  owner             User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  albums            MediaAlbum[]
+  tags              MediaTag[]
+
+  @@index([ownerId, createdAt])
+}
+
+model Album {
+  id        String       @id @default(cuid())
+  ownerId   String
+  name      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  owner     User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  media     MediaAlbum[]
+
+  @@unique([ownerId, name])
+}
+
+model Tag {
+  id        String     @id @default(cuid())
+  ownerId   String
+  name      String
+  createdAt DateTime   @default(now())
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  media     MediaTag[]
+
+  @@unique([ownerId, name])
+}
+
+model MediaAlbum {
+  mediaId String
+  albumId String
+  addedAt DateTime @default(now())
+  media   Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  album   Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, albumId])
+  @@index([albumId, addedAt])
+}
+
+model MediaTag {
+  mediaId String
+  tagId   String
+  media   Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([mediaId, tagId])
+  @@index([tagId])
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum MediaStatus {
+  PENDING
+  READY
+  FAILED
+}
