@@ -24,6 +24,7 @@ model Media {
   ownerId           String
   cloudinaryAssetId String      @unique
   publicId          String      @unique
+  secureUrl         String?
   originalFilename  String
   mimeType          String
   mediaType         MediaType
