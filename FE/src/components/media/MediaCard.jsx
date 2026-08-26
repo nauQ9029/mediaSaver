@@ -1,16 +1,10 @@
 import React, { forwardRef } from 'react';
+import { getMediaUrl, getVideoPosterUrl } from '../../lib/cloudinary';
 
 const MediaCard = forwardRef(({ item, onClick }, ref) => {
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'YOUR_ACTUAL_CLOUD_NAME';
   const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
-
-  const mediaUrl = item.secureUrl 
-    || item.url 
-    || `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${item.publicId}`;
-
-  const videoPosterUrl = isVideo 
-    ? `https://res.cloudinary.com/${cloudName}/video/upload/${item.publicId}.jpg`
-    : null;
+  const mediaUrl = getMediaUrl(item);
+  const videoPosterUrl = isVideo ? getVideoPosterUrl(item) : null;
 
   return (
     <div

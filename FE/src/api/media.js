@@ -26,13 +26,13 @@ export const saveMediaMetadata = async (cloudinaryRes, file) => {
   const payload = {
     publicId: cloudinaryRes.public_id,
     cloudinaryAssetId: cloudinaryRes.asset_id,
+    secureUrl: cloudinaryRes.secure_url,
     originalFilename: file.name.replace(/\.[^/.]+$/, ''),
     mimeType: cloudinaryRes.resource_type,
     mediaType: cloudinaryRes.resource_type.toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE',
     bytes: cloudinaryRes.bytes,
     width: cloudinaryRes.width,
     height: cloudinaryRes.height,
-    ownerId: 'demo-user-9029',
   };
 
   const { data } = await apiClient.post('/media', payload);
