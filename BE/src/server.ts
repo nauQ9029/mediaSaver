@@ -7,6 +7,12 @@ import express, { type Request, type Response } from 'express';
 
 dotenv.config();
 
+for (const variable of ['DATABASE_URL', 'JWT_SECRET', 'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']) {
+  if (!process.env[variable]) {
+    throw new Error(`Missing required environment variable: ${variable}`);
+  }
+}
+
 const app = express();
 const port = Number(process.env.PORT) || 5000;
 const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:5173';

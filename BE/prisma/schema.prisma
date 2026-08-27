@@ -42,7 +42,7 @@ model Media {
   albums            MediaAlbum[]
   tags              MediaTag[]
 
-  @@index([ownerId, createdAt])
+  @@index([ownerId, createdAt, id])
 }
 
 model Album {
