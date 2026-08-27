@@ -1,23 +1,20 @@
 import React, { useEffect } from 'react';
+import { getMediaUrl } from '../../lib/cloudinary';
 
 export default function MediaViewer({ item, onClose }) {
-  if (!item) return null;
-
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'YOUR_ACTUAL_CLOUD_NAME';
-  const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
-
-  const mediaUrl = item.secureUrl 
-    || item.url 
-    || `https://res.cloudinary.com/${cloudName}/${isVideo ? 'video' : 'image'}/upload/${item.publicId}`;
-
   // Close modal on Escape key press
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && item) onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [item, onClose]);
+
+  if (!item) return null;
+
+  const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
+  const mediaUrl = getMediaUrl(item);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 md:p-8">
