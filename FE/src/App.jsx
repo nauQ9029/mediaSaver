@@ -100,12 +100,24 @@ export default function App() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    const file = files[0];
+    const allowedTypes = new Set([
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+      'video/mp4', 'video/webm', 'video/quicktime',
+    ]);
+    const maxBytes = 100 * 1024 * 1024;
+
+    if (!allowedTypes.has(file.type) || file.size > maxBytes) {
+      alert('Choose a supported image or video no larger than 100 MB.');
+      e.target.value = '';
+      return;
+    }
+
     try {
       setUploading(true);
-      const file = files[0];
       const sigData = await getUploadSignature();
       const cloudRes = await uploadToCloudinary(file, sigData);
-      const savedItem = await saveMediaMetadata(cloudRes, file);
+      const savedItem = await saveMediaMetadata(cloudRes);
 
       setItems((prev) => [savedItem, ...prev]);
     } catch (err) {
@@ -113,6 +125,7 @@ export default function App() {
       alert('Upload failed. Check backend console.');
     } finally {
       setUploading(false);
+      e.target.value = '';
     }
   };
 

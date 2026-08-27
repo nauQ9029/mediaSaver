@@ -15,6 +15,9 @@ export const uploadToCloudinary = async (file, signatureData) => {
   formData.append('timestamp', signatureData.timestamp);
   formData.append('signature', signatureData.signature);
   formData.append('folder', signatureData.folder);
+  formData.append('type', signatureData.type);
+  formData.append('media_metadata', String(signatureData.mediaMetadata));
+  formData.append('allowed_formats', signatureData.allowedFormats);
 
   const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${signatureData.cloudName}/auto/upload`;
   const { data } = await axios.post(cloudinaryUrl, formData);
@@ -22,17 +25,10 @@ export const uploadToCloudinary = async (file, signatureData) => {
 };
 
 // 3. Save post-upload metadata into PostgreSQL via Express
-export const saveMediaMetadata = async (cloudinaryRes, file) => {
+export const saveMediaMetadata = async (cloudinaryRes) => {
   const payload = {
     publicId: cloudinaryRes.public_id,
-    cloudinaryAssetId: cloudinaryRes.asset_id,
-    secureUrl: cloudinaryRes.secure_url,
-    originalFilename: file.name.replace(/\.[^/.]+$/, ''),
-    mimeType: cloudinaryRes.resource_type,
-    mediaType: cloudinaryRes.resource_type.toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE',
-    bytes: cloudinaryRes.bytes,
-    width: cloudinaryRes.width,
-    height: cloudinaryRes.height,
+    resourceType: cloudinaryRes.resource_type,
   };
 
   const { data } = await apiClient.post('/media', payload);

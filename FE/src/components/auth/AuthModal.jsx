@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { loginUser, registerUser } from '../../api/auth';
 
 export default function AuthModal({ isOpen, onSuccess }) {
-  if (!isOpen) return null;
-
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  if (!isOpen) return null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
