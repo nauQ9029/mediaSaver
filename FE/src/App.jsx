@@ -6,22 +6,26 @@ import {
   uploadToCloudinary,
   saveMediaMetadata,
   fetchMediaGallery,
+  deleteMedia,
 } from './api/media';
 
 import Header from './components/Header';
 import MediaCard from './components/media/MediaCard';
 import MediaViewer from './components/media/MediaViewer';
 import AuthModal from './components/auth/AuthModal';
+import ResetPasswordPage from './components/auth/ResetPasswordPage';
 
 export default function App() {
   const [status, setStatus] = useState('Checking connection…');
   const [user, setUser] = useState(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const isResetPath = window.location.pathname === '/reset-password';
 
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
 
   // health check on mount & restore session on mount
@@ -51,6 +55,10 @@ export default function App() {
     setItems([]);
     setNextCursor(null);
   };
+
+  if (isResetPath) {
+    return <ResetPasswordPage onComplete={() => window.location.href = '/'} />;
+  }
 
   const handleLogout = () => {
     logoutUser();
@@ -129,6 +137,24 @@ export default function App() {
     }
   };
 
+  const handleDeleteMedia = async (item) => {
+    if (!window.confirm(`Delete ${item.originalFilename || 'this media'}? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      await deleteMedia(item.id);
+      setItems((previous) => previous.filter((media) => media.id !== item.id));
+      setSelectedMedia(null);
+    } catch (err) {
+      console.error('Failed to delete media:', err);
+      alert(err.response?.data?.error || 'Unable to delete this media. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
 return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
       <div className="mx-auto max-w-6xl">
@@ -190,7 +216,12 @@ return (
 
       {/* Modals */}
       <AuthModal isOpen={isAuthOpen} onSuccess={handleAuthSuccess} />
-      <MediaViewer item={selectedMedia} onClose={() => setSelectedMedia(null)} />
+      <MediaViewer
+        item={selectedMedia}
+        deleting={deleting}
+        onClose={() => setSelectedMedia(null)}
+        onDelete={handleDeleteMedia}
+      />
     </main>
   );
 }

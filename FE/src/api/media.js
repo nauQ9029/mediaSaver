@@ -43,3 +43,7 @@ export const fetchMediaGallery = async (limit = 12, cursor = null) => {
   const { data } = await apiClient.get(`/media?${params.toString()}`);
   return data;
 };
+
+export const deleteMedia = async (id) => {
+  await apiClient.delete(`/media/${id}`);
+};
