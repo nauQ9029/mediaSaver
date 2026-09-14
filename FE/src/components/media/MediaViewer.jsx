@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { getMediaUrl } from '../../lib/cloudinary';
 
-export default function MediaViewer({ item, onClose }) {
+export default function MediaViewer({ item, deleting, onClose, onDelete }) {
   // Close modal on Escape key press
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -93,6 +93,14 @@ export default function MediaViewer({ item, onClose }) {
           >
             Open Original File
           </a>
+          <button
+            type="button"
+            onClick={() => onDelete(item)}
+            disabled={deleting}
+            className="mt-3 w-full py-2 border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-60 text-xs font-semibold rounded-lg transition"
+          >
+            {deleting ? 'Deleting…' : 'Delete Media'}
+          </button>
         </div>
       </div>
     </div>

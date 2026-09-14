@@ -128,4 +128,38 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Delete the Cloudinary asset before removing its database record. This avoids
+// losing the only reference to an asset if Cloudinary is temporarily unavailable.
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const ownerId = req.user?.userId;
+    if (!ownerId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const mediaId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!mediaId) return res.status(400).json({ error: 'A valid media ID is required' });
+
+    const media = await prisma.media.findFirst({
+      where: { id: mediaId, ownerId },
+    });
+    if (!media) return res.status(404).json({ error: 'Media not found' });
+
+    const result = await cloudinary.uploader.destroy(media.publicId, {
+      resource_type: media.mediaType === MediaType.VIDEO ? 'video' : 'image',
+      type: 'authenticated',
+      invalidate: true,
+    });
+
+    if (!['ok', 'not found'].includes(result.result)) {
+      console.error('Cloudinary delete failed:', result);
+      return res.status(502).json({ error: 'Failed to remove media from storage' });
+    }
+
+    await prisma.media.delete({ where: { id: media.id } });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Delete media error:', error);
+    res.status(500).json({ error: 'Failed to delete media' });
+  }
+});
+
 export default router;
