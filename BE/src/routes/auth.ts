@@ -161,12 +161,15 @@ router.get('/verify-reset-token/:token', async (req: Request, res: Response) => 
   try {
     const { token } = req.params;
 
-    if (!token) {
+    // Narrowing type down to single string explicitly
+    const rawToken = Array.isArray(token) ? token[0] : token;
+
+    if (!rawToken || typeof rawToken !== 'string') {
       return res.status(400).json({ error: 'Reset token is required' });
     }
 
-    // Hash the token from URL parameter to compare with database
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    // Hash the string token to compare with database
+    const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
 
     const user = await prisma.user.findFirst({
       where: {

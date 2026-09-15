@@ -44,6 +44,19 @@ export const fetchMediaGallery = async (limit = 12, cursor = null) => {
   return data;
 };
 
+// 5. Update media item metadata (e.g., rename originalFilename)
+export const updateMediaMetadata = async (id, updates) => {
+  const { data } = await apiClient.patch(`/media/${id}`, updates);
+  return data;
+};
+
+// 6. Fetch signed original download URL
+export const getMediaDownloadUrl = async (id) => {
+  const { data } = await apiClient.get(`/media/${id}/download`);
+  return data;
+};
+
+// 7. Delete media asset
 export const deleteMedia = async (id) => {
   await apiClient.delete(`/media/${id}`);
 };

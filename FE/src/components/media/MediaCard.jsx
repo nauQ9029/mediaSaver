@@ -1,10 +1,21 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState } from 'react';
 import { getMediaUrl, getVideoPosterUrl } from '../../lib/cloudinary';
 
-const MediaCard = forwardRef(({ item, onClick }, ref) => {
+const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
+  const [menuOpen, setMenuOpen] = useState(false);
   const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
-  const mediaUrl = getMediaUrl(item);
+  
+  // Appending #t=0.001 forces HTML5 video element to seek & render first frame thumbnail
+  const rawMediaUrl = getMediaUrl(item);
+  const mediaUrl = isVideo ? `${rawMediaUrl}#t=0.001` : rawMediaUrl;
   const videoPosterUrl = isVideo ? getVideoPosterUrl(item) : null;
+
+  const handleMenuAction = (e, action) => {
+    e.stopPropagation();
+    setMenuOpen(false);
+    if (action === 'edit') onEdit?.(item);
+    if (action === 'delete') onDelete?.(item);
+  };
 
   return (
     <div
@@ -15,7 +26,8 @@ const MediaCard = forwardRef(({ item, onClick }, ref) => {
       {isVideo ? (
         <video
           src={mediaUrl}
-          poster={videoPosterUrl}
+          poster={videoPosterUrl || undefined}
+          preload="metadata"
           className="w-full h-full object-cover"
           muted
           playsInline
@@ -36,13 +48,48 @@ const MediaCard = forwardRef(({ item, onClick }, ref) => {
 
       {/* Video Badge */}
       {isVideo && (
-        <div className="absolute top-2 right-2 bg-slate-950/70 text-slate-200 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border border-slate-700/50">
+        <div className="absolute top-2 left-2 bg-slate-950/70 text-slate-200 px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase border border-slate-700/50 z-10">
           Video
         </div>
       )}
 
+      {/* 3 Dots Menu Button */}
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition z-20">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((prev) => !prev);
+          }}
+          className="bg-slate-950/80 hover:bg-slate-900 text-slate-300 w-7 h-7 rounded-lg flex items-center justify-center border border-slate-700/50 transition"
+        >
+          •••
+        </button>
+
+        {/* Dropdown Options */}
+        {menuOpen && (
+          <div
+            className="absolute right-0 mt-1 w-28 bg-slate-900 border border-slate-800 rounded-lg shadow-xl overflow-hidden text-xs py-1 z-30"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={(e) => handleMenuAction(e, 'edit')}
+              className="w-full text-left px-3 py-1.5 text-slate-300 hover:bg-slate-800 transition"
+            >
+              Rename
+            </button>
+            <button
+              onClick={(e) => handleMenuAction(e, 'delete')}
+              className="w-full text-left px-3 py-1.5 text-rose-400 hover:bg-rose-500/10 transition"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Hover Info Overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition p-3 flex flex-col justify-end pointer-events-none">
+      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition p-3 flex flex-col justify-end pointer-events-none z-10">
         <p className="text-xs font-semibold text-slate-200 truncate">{item.originalFilename}</p>
         <p className="text-[10px] text-slate-400">{(item.bytes / 1024).toFixed(1)} KB</p>
       </div>
