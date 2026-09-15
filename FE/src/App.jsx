@@ -170,7 +170,7 @@ return (
 
         {/* Unauthenticated View */}
         {!user && (
-          <section className="text-center py-20 bg-slate-900/50 border border-slate-800 rounded-2xl p-8 my-8">
+          <section className="text-center py-20 bg-slate-900 border border-slate-800 rounded-2xl p-8 my-8">
             <h2 className="text-2xl font-bold">Your Private Media Vault</h2>
             <p className="text-sm text-slate-400 mt-2 max-w-md mx-auto">
               Sign in or create an account to start uploading images and videos directly to your isolated cloud library.
