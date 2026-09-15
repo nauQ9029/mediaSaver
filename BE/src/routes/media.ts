@@ -16,6 +16,10 @@ const finalizeMediaSchema = z.object({
   resourceType: z.enum(['image', 'video']),
 });
 
+const updateMediaSchema = z.object({
+  originalFilename: z.string().trim().min(1).max(255).optional(),
+});
+
 function withDeliveryUrl<T extends { publicId: string; mediaType: MediaType }>(media: T) {
   return {
     ...media,
@@ -125,6 +129,74 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('Fetch media error:', error);
     res.status(500).json({ error: 'Failed to fetch media' });
+  }
+});
+
+// Update media metadata (e.g. rename file)
+router.patch('/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const ownerId = req.user?.userId;
+    if (!ownerId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const mediaId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!mediaId) return res.status(400).json({ error: 'A valid media ID is required' });
+
+    const parsed = updateMediaSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid metadata updates provided' });
+    }
+
+    const media = await prisma.media.findFirst({
+      where: { id: mediaId, ownerId },
+    });
+    if (!media) return res.status(404).json({ error: 'Media not found' });
+
+    const updatedMedia = await prisma.media.update({
+      where: { id: media.id },
+      data: parsed.data,
+    });
+
+    res.json(withDeliveryUrl(updatedMedia));
+  } catch (error) {
+    console.error('Update media error:', error);
+    res.status(500).json({ error: 'Failed to update media' });
+  }
+});
+
+// Generate download link for original full-resolution media
+router.get('/:id/download', async (req: AuthRequest, res: Response) => {
+  try {
+    const ownerId = req.user?.userId;
+    if (!ownerId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const mediaId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!mediaId) return res.status(400).json({ error: 'A valid media ID is required' });
+
+    const media = await prisma.media.findFirst({
+      where: { id: mediaId, ownerId },
+    });
+    if (!media) return res.status(404).json({ error: 'Media not found' });
+
+    const format = media.mimeType.split('/')[1] || 'jpg';
+    
+    // Generate a signed download URL with attachment header flag enabled
+    const downloadUrl = cloudinary.utils.private_download_url(
+      media.publicId,
+      format,
+      {
+        resource_type: media.mediaType === MediaType.VIDEO ? 'video' : 'image',
+        type: 'authenticated',
+        attachment: true,
+      }
+    );
+
+    res.json({
+      downloadUrl,
+      filename: media.originalFilename,
+    });
+  } catch (error) {
+    console.error('Download media error:', error);
+    res.status(500).json({ error: 'Failed to generate download URL' });
   }
 });
 
