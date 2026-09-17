@@ -9,9 +9,9 @@
   - [x] Add full-resolution download links.
 
 ## Phase 2: Automated Testing & Security Boundaries
-- [ ] **Multi-Tenant Ownership Integration Tests**
-  - [ ] Write Vitest/Supertest suites enforcing user isolation.
-  - [ ] Verify 403/404 responses when User A accesses User B's media.
+- [x] **Multi-Tenant Ownership Integration Tests**
+  - [x] Write Vitest/Supertest suites enforcing user isolation.
+  - [x] Verify 403/404 responses when User A accesses User B's media.
 - [ ] **Auth Flow Edge Case Tests**
   - [ ] Test token expiration, reset flows, and invalid Zod payloads.
 
