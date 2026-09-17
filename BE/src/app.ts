@@ -20,7 +20,7 @@ for (const variable of [
 }
 
 const app = express();
-const clientUrl = process.env.CLIENT_URL ?? 'http://localhost:5173';
+const clientUrl = process.env.CLIENT_ORIGIN ?? process.env.CLIENT_URL ?? 'http://localhost:5173';
 
 app.use(cors({ origin: clientUrl, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
