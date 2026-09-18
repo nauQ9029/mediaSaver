@@ -1,11 +1,13 @@
 import { Router, Response } from 'express';
 import cloudinary from '../config/cloudinary.js';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { uploadLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
 // Enforce auth on ALL upload endpoints
 router.use(authenticateToken);
+router.use(uploadLimiter);
 
 router.get('/signature', async (req: AuthRequest, res: Response) => {
   try {
