@@ -23,8 +23,13 @@
   - [x] Implement HTTP-only, `SameSite=Strict` refresh cookies.
 
 ## Phase 4: Schema Cleanup & Production Setup
-- [ ] **Albums/Tags Alignment**
-  - [ ] Decide on CRUD routes/UI or prune unused models from `schema.prisma`.
-- [ ] **Deployment & Environment Setup**
-  - [ ] Finalize `.env.example`.
-  - [ ] Configure build scripts and set up error logging (e.g., Sentry).
+- [x] **Albums/Tags Alignment**
+  - [x] Decide on CRUD routes/UI or prune unused models from `schema.prisma`.
+- [x] **Deployment & Environment Setup**
+  - [x] Finalize `.env.example`.
+  - [x] Configure build scripts and set up error logging (e.g., Sentry).
+
+# Phase 5: Complete the FE Refresh Token Interceptor
+- [ ] **Intercept 401 Unauthorized responses on API calls.**
+- [ ] **Call POST /api/auth/refresh behind the scenes to get a new accessToken.**
+- [ ] **Retry the original failed request automatically without forcing the user to re-login.**
