@@ -1,17 +1,18 @@
 import { apiClient } from './client';
+import { setAccessToken } from '../lib/api';
 
 export const loginUser = async (email, password) => {
   const { data } = await apiClient.post('/auth/login', { email, password });
-  if (data.token) {
-    localStorage.setItem('token', data.token);
+  if (data.accessToken) {
+    setAccessToken(data.accessToken);
   }
   return data;
 };
 
 export const registerUser = async (email, password) => {
   const { data } = await apiClient.post('/auth/register', { email, password });
-  if (data.token) {
-    localStorage.setItem('token', data.token);
+  if (data.accessToken) {
+    setAccessToken(data.accessToken);
   }
   return data;
 };
@@ -37,5 +38,5 @@ export const fetchProfile = async () => {
 };
 
 export const logoutUser = () => {
-  localStorage.removeItem('token');
+  setAccessToken(null);
 };
