@@ -1,6 +1,7 @@
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express, { type Request, type Response } from 'express';
+import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth.js';
 import mediaRoutes from './routes/media.js';
 import uploadRoutes from './routes/upload.js';
@@ -24,6 +25,7 @@ const clientUrl = process.env.CLIENT_ORIGIN ?? process.env.CLIENT_URL ?? 'http:/
 
 app.use(cors({ origin: clientUrl, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
