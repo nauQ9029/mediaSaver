@@ -1,5 +1,6 @@
 // Database seeds, JWT generators, mock factory
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../src/lib/prisma'; // Adjust import to your Prisma client location
 
 export const generateAuthToken = (userId) => {
@@ -11,11 +12,14 @@ export const generateExpiredToken = () => {
 };
 
 export const createTestUser = async (overrides = {}) => {
+  const plainPassword = overrides.password || 'Password123456!';
+  const hashedPassword = await bcrypt.hash(plainPassword, 10);
+
   return await prisma.user.create({
     data: {
       email: `test-${Date.now()}-${Math.random()}@vault.local`,
-      password: '$2a$10$e8R4a0S0gL.J2Z5J9nJb2.u8eZqJqK0Z5J9nJb2.u8eZqJqK0Z5J', // Changed passwordHash -> password
       ...overrides,
+      password: hashedPassword,
     },
   });
 };

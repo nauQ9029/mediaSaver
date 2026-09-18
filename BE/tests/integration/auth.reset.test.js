@@ -134,7 +134,7 @@ describe('Password Reset Flow Edge Cases', () => {
         .send({ email: user.email, password: newPassword });
 
       expect(loginRes.status).toBe(200);
-      expect(loginRes.body).toHaveProperty('token');
+      expect(loginRes.body).toHaveProperty('accessToken');
     });
 
     it('should reject new password if it fails Zod length validation (< 12 chars)', async () => {

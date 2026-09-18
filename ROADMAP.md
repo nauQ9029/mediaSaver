@@ -12,15 +12,15 @@
 - [x] **Multi-Tenant Ownership Integration Tests**
   - [x] Write Vitest/Supertest suites enforcing user isolation.
   - [x] Verify 403/404 responses when User A accesses User B's media.
-- [ ] **Auth Flow Edge Case Tests**
-  - [ ] Test token expiration, reset flows, and invalid Zod payloads.
+- [x] **Auth Flow Edge Case Tests**
+  - [x] Test token expiration, reset flows, and invalid Zod payloads.
 
 ## Phase 3: Rate Limiting & Auth Hardening
-- [ ] **Rate Limiting**
-  - [ ] Add `express-rate-limit` to `/login`, `/register`, `/forgot-password`, and upload routes.
-- [ ] **Token Strategy Upgrade**
-  - [ ] Transition from long-lived JWTs in `localStorage` to short-lived access tokens (15m).
-  - [ ] Implement HTTP-only, `SameSite=Strict` refresh cookies.
+- [x] **Rate Limiting**
+  - [x] Add `express-rate-limit` to `/login`, `/register`, `/forgot-password`, and upload routes.
+- [x] **Token Strategy Upgrade**
+  - [x] Transition from long-lived JWTs in `localStorage` to short-lived access tokens (15m).
+  - [x] Implement HTTP-only, `SameSite=Strict` refresh cookies.
 
 ## Phase 4: Schema Cleanup & Production Setup
 - [ ] **Albums/Tags Alignment**
