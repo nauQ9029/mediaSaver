@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth.js';
 import mediaRoutes from './routes/media.js';
 import uploadRoutes from './routes/upload.js';
+import './workers/mediaWorker.js';
 
 dotenv.config();
 

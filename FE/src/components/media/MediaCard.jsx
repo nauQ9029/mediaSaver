@@ -4,10 +4,9 @@ import { getMediaUrl, getVideoPosterUrl } from '../../lib/cloudinary';
 const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
-  
-  // Appending #t=0.001 forces HTML5 video element to seek & render first frame thumbnail
-  const rawMediaUrl = getMediaUrl(item);
-  const mediaUrl = isVideo ? `${rawMediaUrl}#t=0.001` : rawMediaUrl;
+
+  // Use raw signed Cloudinary URL directly without hash fragments
+  const mediaUrl = getMediaUrl(item);
   const videoPosterUrl = isVideo ? getVideoPosterUrl(item) : null;
 
   const handleMenuAction = (e, action) => {
@@ -15,6 +14,20 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
     setMenuOpen(false);
     if (action === 'edit') onEdit?.(item);
     if (action === 'delete') onDelete?.(item);
+  };
+
+  const handleMouseEnter = (e) => {
+    const playPromise = e.currentTarget.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        // Suppress browser autoplay restrictions on quick hover
+      });
+    }
+  };
+
+  const handleMouseLeave = (e) => {
+    e.currentTarget.pause();
+    e.currentTarget.currentTime = 0;
   };
 
   return (
@@ -31,11 +44,8 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
           className="w-full h-full object-cover"
           muted
           playsInline
-          onMouseOver={(e) => e.currentTarget.play()}
-          onMouseOut={(e) => {
-            e.currentTarget.pause();
-            e.currentTarget.currentTime = 0;
-          }}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
         />
       ) : (
         <img
