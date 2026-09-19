@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma.js';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
 import { MediaType, MediaStatus } from '../generated/prisma/client.js';
 import cloudinary from '../config/cloudinary.js';
+import { redis } from '../config/redis.js';
+import { mediaQueue } from '../queues/mediaQueue.js';
 
 const router = Router();
 
@@ -19,6 +21,23 @@ const finalizeMediaSchema = z.object({
 const updateMediaSchema = z.object({
   originalFilename: z.string().trim().min(1).max(255).optional(),
 });
+
+// Cache key helper: isolate cache per user, limit, and cursor
+const getMediaCacheKey = (ownerId: string, limit: number, cursor: string = 'none') =>
+  `cache:media:user:${ownerId}:l:${limit}:c:${cursor}`;
+
+// Helper to invalidate all pagination cache keys for a specific user
+async function invalidateUserMediaCache(ownerId: string): Promise<void> {
+  try {
+    const pattern = `cache:media:user:${ownerId}:*`;
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } catch (err) {
+    console.error('Failed to invalidate Redis media cache:', err);
+  }
+}
 
 function withDeliveryUrl<T extends { publicId: string; mediaType: MediaType }>(media: T) {
   return {
@@ -49,8 +68,6 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ error: 'Media does not belong to this user folder' });
     }
 
-    // Do not trust Cloudinary metadata supplied by the browser. Read it from
-    // Cloudinary after upload, then enforce the server-side ownership policy.
     const asset = await cloudinary.api.resource(publicId, {
       resource_type: resourceType,
       type: 'authenticated',
@@ -88,6 +105,22 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return res.status(409).json({ error: 'Media is already registered to another user' });
     }
 
+    // Invalidate cached gallery views for this user
+    await invalidateUserMediaCache(ownerId);
+
+    // Offload asynchronous background task to BullMQ
+    try {
+      await mediaQueue.add('analyze-media', {
+        mediaId: media.id,
+        ownerId,
+        publicId: media.publicId,
+        action: 'PROCESS_METADATA',
+      });
+    } catch (queueErr) {
+      console.error('Failed to dispatch BullMQ job:', queueErr);
+      // Non-blocking: primary upload response completes even if background queue fails
+    }
+
     res.status(201).json(withDeliveryUrl(media));
   } catch (error) {
     console.error('Save media error:', error);
@@ -95,7 +128,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Cursor-based pagination for gallery grid
+// Cursor-based pagination for gallery grid with Redis Caching
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
     const ownerId = req.user?.userId;
@@ -107,6 +140,20 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       : 20;
     const cursor = req.query.cursor as string | undefined;
 
+    const cacheKey = getMediaCacheKey(ownerId, limit, cursor);
+
+    // 1. Attempt Cache Lookup
+    try {
+      const cachedResult = await redis.get(cacheKey);
+      if (cachedResult) {
+        return res.json(JSON.parse(cachedResult));
+      }
+    } catch (cacheErr) {
+      console.error('Redis GET error:', cacheErr);
+      // Fallback to DB on Redis connection/query failures
+    }
+
+    // 2. Validate Cursor & Fetch from Database
     if (cursor) {
       const cursorMedia = await prisma.media.findFirst({
         where: { id: cursor, ownerId },
@@ -124,8 +171,16 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     });
 
     const nextCursor = media.length === limit ? media[media.length - 1].id : null;
+    const responseData = { data: media.map(withDeliveryUrl), nextCursor };
 
-    res.json({ data: media.map(withDeliveryUrl), nextCursor });
+    // 3. Write payload to Redis with a 300-second (5 min) TTL
+    try {
+      await redis.setex(cacheKey, 300, JSON.stringify(responseData));
+    } catch (cacheErr) {
+      console.error('Redis SETEX error:', cacheErr);
+    }
+
+    res.json(responseData);
   } catch (error) {
     console.error('Fetch media error:', error);
     res.status(500).json({ error: 'Failed to fetch media' });
@@ -156,6 +211,9 @@ router.patch('/:id', async (req: AuthRequest, res: Response) => {
       data: parsed.data,
     });
 
+    // Invalidate cached gallery views for this user
+    await invalidateUserMediaCache(ownerId);
+
     res.json(withDeliveryUrl(updatedMedia));
   } catch (error) {
     console.error('Update media error:', error);
@@ -179,7 +237,6 @@ router.get('/:id/download', async (req: AuthRequest, res: Response) => {
 
     const format = media.mimeType.split('/')[1] || 'jpg';
     
-    // Generate a signed download URL with attachment header flag enabled
     const downloadUrl = cloudinary.utils.private_download_url(
       media.publicId,
       format,
@@ -200,8 +257,7 @@ router.get('/:id/download', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete the Cloudinary asset before removing its database record. This avoids
-// losing the only reference to an asset if Cloudinary is temporarily unavailable.
+// Delete the Cloudinary asset before removing its database record
 router.delete('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ownerId = req.user?.userId;
@@ -227,6 +283,10 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     }
 
     await prisma.media.delete({ where: { id: media.id } });
+
+    // Invalidate cached gallery views for this user
+    await invalidateUserMediaCache(ownerId);
+
     res.status(204).send();
   } catch (error) {
     console.error('Delete media error:', error);
