@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from './api/client';
-import { fetchProfile, logoutUser } from './api/auth'
+import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth'
 import {
   getUploadSignature,
   uploadToCloudinary,
@@ -35,17 +35,15 @@ export default function App() {
       .then(({ data }) => setStatus(data.message || 'Backend Connected'))
       .catch(() => setStatus('Unable to connect to backend'));
 
-    const token = localStorage.getItem('token');
-    if (token) {
-      fetchProfile()
-        .then((userData) => {
-          setUser(userData);
-        })
-        .catch(() => {
-          logoutUser();
-          setUser(null);
-        });
-    }
+    refreshAccessToken()
+      .then(() => fetchProfile())
+      .then((userData) => {
+        setUser(userData);
+      })
+      .catch(() => {
+        logoutUser();
+        setUser(null);
+      });
   }, []);
 
   // Authentication Handlers

@@ -17,6 +17,15 @@ export const registerUser = async (email, password) => {
   return data;
 };
 
+export const refreshAccessToken = async () => {
+  const { data } = await apiClient.post('/auth/refresh');
+  if (!data.accessToken) {
+    throw new Error('Access token was not returned by the refresh endpoint');
+  }
+  setAccessToken(data.accessToken);
+  return data.accessToken;
+};
+
 export const requestPasswordReset = async (email) => {
   const { data } = await apiClient.post('/auth/forgot-password', { email });
   return data;
