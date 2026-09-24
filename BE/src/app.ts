@@ -5,7 +5,7 @@ import express, { type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth.js';
 import mediaRoutes from './routes/media.js';
-import uploadRoutes from './routes/upload.js';
+import r2UploadRoutes from './routes/r2Upload.router.js';
 import './workers/mediaWorker.js';
 
 dotenv.config();
@@ -13,9 +13,10 @@ dotenv.config();
 for (const variable of [
   'DATABASE_URL',
   'JWT_SECRET',
-  'CLOUDINARY_CLOUD_NAME',
-  'CLOUDINARY_API_KEY',
-  'CLOUDINARY_API_SECRET',
+  'R2_ACCOUNT_ID',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_BUCKET_NAME',
 ]) {
   if (!process.env[variable]) {
     throw new Error(`Missing required environment variable: ${variable}`);
@@ -41,7 +42,7 @@ app.use(cookieParser());
 
 // application routes
 app.use('/api/auth', authRoutes);
-app.use('/api/upload', uploadRoutes);
+app.use('/api/upload', r2UploadRoutes);
 app.use('/api/media', mediaRoutes);
 
 app.get('/api/health', (_request: Request, response: Response) => {
