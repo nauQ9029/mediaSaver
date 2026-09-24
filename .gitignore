@@ -137,3 +137,7 @@ dist
 
 # Prisma v7 generated client
 BE/src/generated/prisma/
+
+# local temporary files created during testing/file handling
+tmp/
+tmp/uploads/
