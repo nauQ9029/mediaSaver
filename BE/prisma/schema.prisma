@@ -24,8 +24,9 @@ model User {
 model Media {
   id                String      @id @default(cuid())
   ownerId           String
-  cloudinaryAssetId String      @unique
-  publicId          String      @unique
+  storageProvider   String      @default("R2")
+  cloudinaryAssetId String?     // optional for cloudinary R2
+  publicId          String?     // optional for cloudinary R2
   secureUrl         String?
   originalFilename  String
   mimeType          String

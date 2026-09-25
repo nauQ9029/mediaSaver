@@ -1,13 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from './api/client';
-import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth'
-import {
-  getUploadSignature,
-  uploadToCloudinary,
-  saveMediaMetadata,
-  fetchMediaGallery,
-  deleteMedia,
-} from './api/media';
+import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth';
+import { fetchMediaGallery, deleteMedia } from './api/media';
 
 import Header from './components/Header';
 import MediaCard from './components/media/MediaCard';
@@ -25,10 +19,11 @@ export default function App() {
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
 
-  // health check on mount & restore session on mount
+  // health check & restore session
   useEffect(() => {
     apiClient
       .get('/health')
@@ -55,7 +50,7 @@ export default function App() {
   };
 
   if (isResetPath) {
-    return <ResetPasswordPage onComplete={() => window.location.href = '/'} />;
+    return <ResetPasswordPage onComplete={() => (window.location.href = '/')} />;
   }
 
   const handleLogout = () => {
@@ -101,7 +96,7 @@ export default function App() {
     [loading, nextCursor]
   );
 
-  // Direct Cloudinary Upload Handler
+  // Upload all media directly to Cloudflare R2 using a short-lived presigned URL.
   const handleFileUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -111,26 +106,69 @@ export default function App() {
       'image/jpeg', 'image/png', 'image/webp', 'image/gif',
       'video/mp4', 'video/webm', 'video/quicktime',
     ]);
-    const maxBytes = 100 * 1024 * 1024;
 
-    if (!allowedTypes.has(file.type) || file.size > maxBytes) {
-      alert('Choose a supported image or video no larger than 100 MB.');
+    // Maximum file limit bumped up to 2GB (2000 MB)
+    const maxBytes = 2000 * 1024 * 1024;
+    if (!allowedTypes.has(file.type)) {
+      alert('Unsupported file format.');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > maxBytes) {
+      alert('File exceeds the 2 GB max limit.');
       e.target.value = '';
       return;
     }
 
     try {
       setUploading(true);
-      const sigData = await getUploadSignature();
-      const cloudRes = await uploadToCloudinary(file, sigData);
-      const savedItem = await saveMediaMetadata(cloudRes);
+      setUploadProgress(0);
+
+      const { data: presignRes } = await apiClient.post('/upload/r2/presign', {
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+      });
+
+      const { uploadUrl, key } = presignRes.data;
+
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', file.type);
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percent);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status === 200) resolve();
+          else reject(new Error(`R2 upload failed with status ${xhr.status}`));
+        };
+
+        xhr.onerror = () => reject(new Error('Network error during R2 upload'));
+        xhr.send(file);
+      });
+
+      const { data: completeRes } = await apiClient.post('/upload/r2/complete', {
+        key,
+        fileName: file.name,
+        mimeType: file.type,
+      });
+
+      const savedItem = completeRes.data;
 
       setItems((prev) => [savedItem, ...prev]);
     } catch (err) {
       console.error('Upload process failed:', err);
-      alert('Upload failed. Check backend console.');
+      alert(err.message || 'Upload failed. Check backend/network console.');
     } finally {
       setUploading(false);
+      setUploadProgress(0);
       e.target.value = '';
     }
   };
@@ -153,7 +191,7 @@ export default function App() {
     }
   };
 
-return (
+  return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
       <div className="mx-auto max-w-6xl">
         {/* Header Bar */}
@@ -161,10 +199,27 @@ return (
           user={user}
           status={status}
           uploading={uploading}
+          uploadProgress={uploadProgress}
           onFileUpload={handleFileUpload}
           onLoginClick={() => setIsAuthOpen(true)}
           onLogout={handleLogout}
         />
+
+        {/* R2 upload progress */}
+        {uploading && uploadProgress > 0 && (
+          <div className="my-4 rounded-lg bg-slate-900 p-4 border border-slate-800">
+            <div className="flex justify-between text-xs text-slate-300 mb-1 font-medium">
+              <span>Uploading media directly to R2...</span>
+              <span>{uploadProgress}%</span>
+            </div>
+            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-sky-400 h-full transition-all duration-300"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Unauthenticated View */}
         {!user && (

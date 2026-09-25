@@ -1,13 +1,11 @@
 import React, { forwardRef, useState } from 'react';
-import { getMediaUrl, getVideoPosterUrl } from '../../lib/cloudinary';
 
 const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
   const [menuOpen, setMenuOpen] = useState(false);
-  const isVideo = item.mediaType === 'VIDEO' || item.mimeType === 'video';
+  const isVideo = item.mediaType === 'VIDEO' || item.mimeType?.startsWith('video/');
 
-  // Use raw signed Cloudinary URL directly without hash fragments
-  const mediaUrl = getMediaUrl(item);
-  const videoPosterUrl = isVideo ? getVideoPosterUrl(item) : null;
+  // Resolve media URL directly from item properties (R2 or fallback)
+  const mediaUrl = item.deliveryUrl || item.secureUrl || item.url || null;
 
   const handleMenuAction = (e, action) => {
     e.stopPropagation();
@@ -36,24 +34,34 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
       onClick={() => onClick(item)}
       className="group relative aspect-square bg-slate-900 rounded-xl overflow-hidden border border-slate-800 hover:border-slate-700 transition cursor-pointer"
     >
-      {isVideo ? (
-        <video
-          src={mediaUrl}
-          poster={videoPosterUrl || undefined}
-          preload="metadata"
-          className="w-full h-full object-cover"
-          muted
-          playsInline
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        />
+      {/* Media Display */}
+      {mediaUrl ? (
+        isVideo ? (
+          <video
+            src={mediaUrl}
+            preload="metadata"
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          />
+        ) : (
+          <img
+            src={mediaUrl}
+            alt={item.originalFilename || 'Media'}
+            className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+            loading="lazy"
+          />
+        )
       ) : (
-        <img
-          src={mediaUrl}
-          alt={item.originalFilename || 'Media'}
-          className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
-          loading="lazy"
-        />
+        /* Safe Fallback Card for Legacy Rows Without URL */
+        <div className="flex h-full w-full flex-col items-center justify-center p-4 text-center">
+          <span className="text-xs font-mono text-slate-400 truncate max-w-full">
+            {item.originalFilename || 'Unnamed file'}
+          </span>
+          <span className="mt-1 text-[10px] text-slate-500">Missing R2 URL</span>
+        </div>
       )}
 
       {/* Video Badge */}
@@ -101,7 +109,9 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
       {/* Hover Info Overlay */}
       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition p-3 flex flex-col justify-end pointer-events-none z-10">
         <p className="text-xs font-semibold text-slate-200 truncate">{item.originalFilename}</p>
-        <p className="text-[10px] text-slate-400">{(item.bytes / 1024).toFixed(1)} KB</p>
+        <p className="text-[10px] text-slate-400">
+          {item.bytes ? `${(item.bytes / (1024 * 1024)).toFixed(1)} MB` : '0 MB'}
+        </p>
       </div>
     </div>
   );
