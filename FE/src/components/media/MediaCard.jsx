@@ -1,10 +1,11 @@
 import React, { forwardRef, useState } from 'react';
+import { OptimizedImage } from '../OptimizedImage';
 
 const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const isVideo = item.mediaType === 'VIDEO' || item.mimeType?.startsWith('video/');
 
-  // Resolve media URL directly from item properties (R2 or fallback)
+  // Resolve media URL directly from item properties
   const mediaUrl = item.deliveryUrl || item.secureUrl || item.url || null;
 
   const handleMenuAction = (e, action) => {
@@ -47,11 +48,11 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
             onMouseLeave={handleMouseLeave}
           />
         ) : (
-          <img
+          <OptimizedImage
             src={mediaUrl}
-            alt={item.originalFilename || 'Media'}
-            className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
-            loading="lazy"
+            alt={item.originalFilename || 'Media asset'}
+            width={400}
+            className="w-full h-full transition duration-300 group-hover:scale-105"
           />
         )
       ) : (

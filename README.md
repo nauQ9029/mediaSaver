@@ -54,6 +54,8 @@ cd FE; npm run build; npm run lint
 ## Before deployment
 
 - Set `CLIENT_URL` to the exact frontend origin.
+- Enable Cloudflare Image Resizing for the frontend zone serving the gallery. The gallery requests `/cdn-cgi/image/.../<encoded-source-url>` variants for adaptive WebP delivery and a small blurred preview; if resizing is unavailable, it falls back to the original signed R2 URL.
+- Configure R2 bucket CORS for the frontend origin with `PUT`, `Content-Type`, and exposed `ETag` headers; multipart upload resume reads each part's ETag in the browser. Multipart uploads support files up to 50 GB with 10 MB parts. Upload state is kept in the browser and verified against R2 when the user reselects the same file. R2 aborts incomplete multipart uploads after seven days by default.
 - Run `npm run prisma:deploy` against the production database.
 - Use a long, unique `JWT_SECRET` and keep Cloudinary credentials server-only.
 - Add rate limiting, monitoring, backups, and automated authorization tests.

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from './api/client';
 import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth';
 import { fetchMediaGallery, deleteMedia } from './api/media';
+import { uploadLargeFileInChunks } from './utils/chunkedUpload';
 
 import Header from './components/Header';
 import MediaCard from './components/media/MediaCard';
@@ -23,7 +24,6 @@ export default function App() {
   const [deleting, setDeleting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
 
-  // health check & restore session
   useEffect(() => {
     apiClient
       .get('/health')
@@ -41,7 +41,6 @@ export default function App() {
       });
   }, []);
 
-  // Authentication Handlers
   const handleAuthSuccess = (userData) => {
     setUser(userData);
     setIsAuthOpen(false);
@@ -60,7 +59,6 @@ export default function App() {
     setNextCursor(null);
   };
 
-  // Fetch gallery items
   const loadGallery = async (cursor = null) => {
     try {
       setLoading(true);
@@ -78,7 +76,6 @@ export default function App() {
     if (user) loadGallery();
   }, [user]);
 
-  // Infinite Scroll Trigger
   const observer = useRef();
   const lastElementRef = useCallback(
     (node) => {
@@ -96,7 +93,6 @@ export default function App() {
     [loading, nextCursor]
   );
 
-  // Upload all media directly to Cloudflare R2 using a short-lived presigned URL.
   const handleFileUpload = async (e) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -107,8 +103,9 @@ export default function App() {
       'video/mp4', 'video/webm', 'video/quicktime',
     ]);
 
-    // Maximum file limit bumped up to 2GB (2000 MB)
-    const maxBytes = 2000 * 1024 * 1024;
+    const maxBytes = 50 * 1024 * 1024 * 1024; // 50 GB
+    const hundredMB = 100 * 1024 * 1024;
+
     if (!allowedTypes.has(file.type)) {
       alert('Unsupported file format.');
       e.target.value = '';
@@ -116,7 +113,7 @@ export default function App() {
     }
 
     if (file.size > maxBytes) {
-      alert('File exceeds the 2 GB max limit.');
+      alert('File exceeds the 50 GB max limit.');
       e.target.value = '';
       return;
     }
@@ -125,42 +122,51 @@ export default function App() {
       setUploading(true);
       setUploadProgress(0);
 
-      const { data: presignRes } = await apiClient.post('/upload/r2/presign', {
-        fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size,
-      });
+      let savedItem;
 
-      const { uploadUrl, key } = presignRes.data;
+      if (file.size > hundredMB) {
+        savedItem = await uploadLargeFileInChunks({
+          file,
+          onProgress: (progress) => setUploadProgress(progress),
+        });
+      } else {
+        const { data: presignRes } = await apiClient.post('/upload/r2/presign', {
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+        });
 
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('PUT', uploadUrl, true);
-        xhr.setRequestHeader('Content-Type', file.type);
+        const { uploadUrl, key } = presignRes.data;
 
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            setUploadProgress(percent);
-          }
-        };
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', uploadUrl, true);
+          xhr.setRequestHeader('Content-Type', file.type);
 
-        xhr.onload = () => {
-          if (xhr.status === 200) resolve();
-          else reject(new Error(`R2 upload failed with status ${xhr.status}`));
-        };
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 100);
+              setUploadProgress(percent);
+            }
+          };
 
-        xhr.onerror = () => reject(new Error('Network error during R2 upload'));
-        xhr.send(file);
-      });
+          xhr.onload = () => {
+            if (xhr.status === 200) resolve();
+            else reject(new Error(`R2 upload failed with status ${xhr.status}`));
+          };
 
-      const { data: completeRes } = await apiClient.post('/upload/r2/complete', {
-        key,
-        fileName: file.name,
-        mimeType: file.type,
-      });
+          xhr.onerror = () => reject(new Error('Network error during R2 upload'));
+          xhr.send(file);
+        });
 
-      const savedItem = completeRes.data;
+        const { data: completeRes } = await apiClient.post('/upload/r2/complete', {
+          key,
+          fileName: file.name,
+          mimeType: file.type,
+        });
+
+        savedItem = completeRes.data;
+      }
 
       setItems((prev) => [savedItem, ...prev]);
     } catch (err) {
@@ -194,7 +200,6 @@ export default function App() {
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
       <div className="mx-auto max-w-6xl">
-        {/* Header Bar */}
         <Header
           user={user}
           status={status}
@@ -205,7 +210,6 @@ export default function App() {
           onLogout={handleLogout}
         />
 
-        {/* R2 upload progress */}
         {uploading && uploadProgress > 0 && (
           <div className="my-4 rounded-lg bg-slate-900 p-4 border border-slate-800">
             <div className="flex justify-between text-xs text-slate-300 mb-1 font-medium">
@@ -221,7 +225,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Unauthenticated View */}
         {!user && (
           <section className="text-center py-20 bg-slate-900 border border-slate-800 rounded-2xl p-8 my-8">
             <h2 className="text-2xl font-bold">Your Private Media Vault</h2>
@@ -237,7 +240,6 @@ export default function App() {
           </section>
         )}
 
-        {/* Media Grid */}
         {user && (
           <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             {items.map((item, index) => {
@@ -248,26 +250,24 @@ export default function App() {
                   item={item}
                   ref={isLast ? lastElementRef : null}
                   onClick={setSelectedMedia}
+                  onDelete={handleDeleteMedia}
                 />
               );
             })}
           </section>
         )}
 
-        {/* Loading Spinner */}
         {loading && (
           <div className="flex justify-center py-8">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
           </div>
         )}
 
-        {/* End Feed Text */}
         {user && !nextCursor && items.length > 0 && !loading && (
           <p className="text-center text-xs text-slate-500 py-8">All media loaded</p>
         )}
       </div>
 
-      {/* Modals */}
       <AuthModal isOpen={isAuthOpen} onSuccess={handleAuthSuccess} />
       <MediaViewer
         item={selectedMedia}
