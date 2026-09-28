@@ -2,21 +2,130 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
-import { MediaType, MediaStatus } from '../generated/prisma/client.js';
-import cloudinary from '../config/cloudinary.js';
+import {
+  DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand,
+  ListObjectsV2Command, PutObjectCommand,
+} from '@aws-sdk/client-s3';
+import jwt, { type JwtPayload } from 'jsonwebtoken';
+import sharp from 'sharp';
+import { getR2BucketName, getR2Client, getR2ObjectUrl } from '../config/r2.js';
 import { redis } from '../config/redis.js';
-import { mediaQueue } from '../queues/mediaQueue.js';
 
 const router = Router();
 
-router.use(authenticateToken);
+const IMAGE_TRANSFORM_TOKEN_TTL_SECONDS = 15 * 60;
+const MAX_TRANSFORM_SOURCE_BYTES = 32 * 1024 * 1024;
+const IMAGE_TRANSFORM_TOKEN_PURPOSE = 'media-image-transform';
+const ALLOWED_IMAGE_WIDTHS = new Set([16, 400, 800, 1200, 1600, 2048]);
+const ALLOWED_IMAGE_QUALITIES = new Set([20, 80]);
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+function createImageTransformUrl(mediaId: string, ownerId: string): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET must be configured');
+  const token = jwt.sign(
+    { mediaId, purpose: IMAGE_TRANSFORM_TOKEN_PURPOSE },
+    secret,
+    { subject: ownerId, expiresIn: IMAGE_TRANSFORM_TOKEN_TTL_SECONDS },
+  );
+  return `media/${encodeURIComponent(mediaId)}/transform?token=${encodeURIComponent(token)}`;
+}
 
-const finalizeMediaSchema = z.object({
-  publicId: z.string().min(1).max(500),
-  resourceType: z.enum(['image', 'video']),
+// Image elements cannot attach the in-memory bearer token, so gallery responses
+// include a short-lived, media-scoped token for this one read-only route.
+router.get('/:id/transform', async (req: AuthRequest, res: Response) => {
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return res.status(500).json({ error: 'Image transformation is unavailable' });
+
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    if (!token) return res.status(401).json({ error: 'Missing image access token' });
+
+    let claims: JwtPayload;
+    try {
+      claims = jwt.verify(token, secret) as JwtPayload;
+    } catch {
+      return res.status(401).json({ error: 'Image access token is invalid or expired' });
+    }
+
+    const mediaId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ownerId = claims.sub;
+    if (
+      !mediaId || typeof ownerId !== 'string' ||
+      claims.mediaId !== mediaId || claims.purpose !== IMAGE_TRANSFORM_TOKEN_PURPOSE
+    ) {
+      return res.status(403).json({ error: 'Image access token does not match this media' });
+    }
+
+    const media = await prisma.media.findFirst({
+      where: { id: mediaId, ownerId },
+      select: { id: true, publicId: true, storageProvider: true, mimeType: true },
+    });
+    if (!media) return res.status(404).json({ error: 'Media not found' });
+    if (media.storageProvider !== 'R2' || !media.publicId || !media.mimeType.startsWith('image/')) {
+      return res.status(415).json({ error: 'Only R2 images can be transformed' });
+    }
+
+    const width = Number(req.query.width ?? 800);
+    const quality = Number(req.query.quality ?? 80);
+    const format = typeof req.query.format === 'string' ? req.query.format : 'webp';
+    if (
+      !Number.isSafeInteger(width) || !ALLOWED_IMAGE_WIDTHS.has(width) ||
+      !Number.isSafeInteger(quality) || !ALLOWED_IMAGE_QUALITIES.has(quality) ||
+      (format !== 'webp' && format !== 'avif' && format !== 'jpeg')
+    ) {
+      return res.status(400).json({ error: 'Invalid image transformation options' });
+    }
+
+    const variantKey = `vault/users/${ownerId}/.variants/${media.id}/w${width}-q${quality}.${format}`;
+    const client = getR2Client();
+    try {
+      await client.send(new HeadObjectCommand({ Bucket: getR2BucketName(), Key: variantKey }));
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.redirect(302, await getR2ObjectUrl(variantKey));
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+      if (status !== 404 && (error as Error).name !== 'NotFound' && (error as Error).name !== 'NoSuchKey') {
+        throw error;
+      }
+    }
+
+    const originalHead = await client.send(new HeadObjectCommand({
+      Bucket: getR2BucketName(), Key: media.publicId,
+    }));
+    const sourceSize = originalHead.ContentLength;
+    if (!Number.isSafeInteger(sourceSize) || !sourceSize || sourceSize > MAX_TRANSFORM_SOURCE_BYTES) {
+      return res.status(413).json({ error: 'Image is too large to transform' });
+    }
+
+    const original = await client.send(new GetObjectCommand({
+      Bucket: getR2BucketName(), Key: media.publicId,
+    }));
+    if (!original.Body) return res.status(404).json({ error: 'Image object not found' });
+
+    const sourceBuffer = Buffer.from(await original.Body.transformToByteArray());
+    const transformed = await sharp(sourceBuffer, { limitInputPixels: 100_000_000 })
+      .rotate()
+      .resize({ width, withoutEnlargement: true })
+      .toFormat(format, { quality })
+      .toBuffer();
+
+    await client.send(new PutObjectCommand({
+      Bucket: getR2BucketName(),
+      Key: variantKey,
+      Body: transformed,
+      ContentType: `image/${format}`,
+      CacheControl: 'private, max-age=86400, immutable',
+    }));
+
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.redirect(302, await getR2ObjectUrl(variantKey));
+  } catch (error) {
+    console.error('Image transformation failed:', error);
+    return res.status(500).json({ error: 'Failed to transform image' });
+  }
 });
+
+router.use(authenticateToken);
 
 const updateMediaSchema = z.object({
   originalFilename: z.string().trim().min(1).max(255).optional(),
@@ -39,94 +148,36 @@ async function invalidateUserMediaCache(ownerId: string): Promise<void> {
   }
 }
 
-function withDeliveryUrl<T extends { publicId: string; mediaType: MediaType }>(media: T) {
-  return {
-    ...media,
-    deliveryUrl: cloudinary.url(media.publicId, {
-      resource_type: media.mediaType === MediaType.VIDEO ? 'video' : 'image',
-      type: 'authenticated',
-      sign_url: true,
-      secure: true,
-    }),
-  };
+async function withDeliveryUrl<T extends {
+  id: string;
+  ownerId: string;
+  mediaType: string;
+  publicId: string | null;
+  storageProvider: string;
+  secureUrl: string | null;
+}>(media: T) {
+  if (!media.publicId) {
+    return { ...media, deliveryUrl: media.secureUrl ?? '' };
+  }
+
+  if (media.storageProvider === 'R2' && media.publicId) {
+    return {
+      ...media,
+      deliveryUrl: await getR2ObjectUrl(media.publicId),
+      ...(media.mediaType === 'IMAGE'
+        ? { imageTransformUrl: createImageTransformUrl(media.id, media.ownerId) }
+        : {}),
+    };
+  }
+
+  // Legacy Cloudinary rows may not have a direct URL. Keep them renderable
+  // without requiring Cloudinary configuration; they need to be migrated to R2.
+  return { ...media, deliveryUrl: media.secureUrl ?? '' };
 }
 
-// Save image or video metadata after successful Cloudinary direct upload
-router.post('/', async (req: AuthRequest, res: Response) => {
-  try {
-    const ownerId = req.user?.userId;
-    if (!ownerId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const parsed = finalizeMediaSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'A valid Cloudinary public ID is required' });
-    }
-
-    const { publicId, resourceType } = parsed.data;
-    const expectedFolder = `vault/users/${ownerId}/`;
-    if (!publicId.startsWith(expectedFolder)) {
-      return res.status(403).json({ error: 'Media does not belong to this user folder' });
-    }
-
-    const asset = await cloudinary.api.resource(publicId, {
-      resource_type: resourceType,
-      type: 'authenticated',
-    });
-
-    if (!['image', 'video'].includes(asset.resource_type)) {
-      return res.status(400).json({ error: 'Only images and videos are supported' });
-    }
-
-    if (!asset.asset_id || asset.bytes > MAX_UPLOAD_BYTES) {
-      return res.status(400).json({ error: 'The uploaded file exceeds the allowed size' });
-    }
-
-    const mediaType = asset.resource_type === 'video' ? MediaType.VIDEO : MediaType.IMAGE;
-
-    const media = await prisma.media.upsert({
-      where: { publicId },
-      update: {},
-      create: {
-        ownerId,
-        cloudinaryAssetId: asset.asset_id,
-        publicId,
-        originalFilename: asset.original_filename || publicId.split('/').pop() || 'Untitled',
-        mimeType: asset.format ? `${asset.resource_type}/${asset.format}` : asset.resource_type,
-        mediaType,
-        bytes: asset.bytes,
-        width: asset.width ?? null,
-        height: asset.height ?? null,
-        duration: asset.duration ?? null,
-        status: MediaStatus.READY,
-      },
-    });
-
-    if (media.ownerId !== ownerId) {
-      return res.status(409).json({ error: 'Media is already registered to another user' });
-    }
-
-    // Invalidate cached gallery views for this user
-    await invalidateUserMediaCache(ownerId);
-
-    // Offload asynchronous background task to BullMQ
-    try {
-      await mediaQueue.add('analyze-media', {
-        mediaId: media.id,
-        ownerId,
-        publicId: media.publicId,
-        action: 'PROCESS_METADATA',
-      });
-    } catch (queueErr) {
-      console.error('Failed to dispatch BullMQ job:', queueErr);
-      // Non-blocking: primary upload response completes even if background queue fails
-    }
-
-    res.status(201).json(withDeliveryUrl(media));
-  } catch (error) {
-    console.error('Save media error:', error);
-    res.status(500).json({ error: 'Failed to save media metadata' });
-  }
-});
+router.post('/', (_req: AuthRequest, res: Response) =>
+  res.status(410).json({ error: 'Direct media registration is disabled; upload through R2.' })
+);
 
 // Cursor-based pagination for gallery grid with Redis Caching
 router.get('/', async (req: AuthRequest, res: Response) => {
@@ -171,7 +222,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     });
 
     const nextCursor = media.length === limit ? media[media.length - 1].id : null;
-    const responseData = { data: media.map(withDeliveryUrl), nextCursor };
+    const responseData = { data: await Promise.all(media.map(withDeliveryUrl)), nextCursor };
 
     // 3. Write payload to Redis with a 300-second (5 min) TTL
     try {
@@ -214,7 +265,7 @@ router.patch('/:id', async (req: AuthRequest, res: Response) => {
     // Invalidate cached gallery views for this user
     await invalidateUserMediaCache(ownerId);
 
-    res.json(withDeliveryUrl(updatedMedia));
+    res.json(await withDeliveryUrl(updatedMedia));
   } catch (error) {
     console.error('Update media error:', error);
     res.status(500).json({ error: 'Failed to update media' });
@@ -234,18 +285,12 @@ router.get('/:id/download', async (req: AuthRequest, res: Response) => {
       where: { id: mediaId, ownerId },
     });
     if (!media) return res.status(404).json({ error: 'Media not found' });
+    if (!media.publicId) return res.status(409).json({ error: 'Media storage reference is missing' });
 
-    const format = media.mimeType.split('/')[1] || 'jpg';
-    
-    const downloadUrl = cloudinary.utils.private_download_url(
-      media.publicId,
-      format,
-      {
-        resource_type: media.mediaType === MediaType.VIDEO ? 'video' : 'image',
-        type: 'authenticated',
-        attachment: true,
-      }
-    );
+    if (media.storageProvider !== 'R2') {
+      return res.status(410).json({ error: 'This legacy media item must be migrated to R2 before downloading' });
+    }
+    const downloadUrl = await getR2ObjectUrl(media.publicId, media.originalFilename);
 
     res.json({
       downloadUrl,
@@ -257,7 +302,7 @@ router.get('/:id/download', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete the Cloudinary asset before removing its database record
+// Delete the stored asset before removing its database record
 router.delete('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ownerId = req.user?.userId;
@@ -270,16 +315,38 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
       where: { id: mediaId, ownerId },
     });
     if (!media) return res.status(404).json({ error: 'Media not found' });
+    if (!media.publicId) return res.status(409).json({ error: 'Media storage reference is missing' });
 
-    const result = await cloudinary.uploader.destroy(media.publicId, {
-      resource_type: media.mediaType === MediaType.VIDEO ? 'video' : 'image',
-      type: 'authenticated',
-      invalidate: true,
-    });
+    if (media.storageProvider !== 'R2') {
+      return res.status(410).json({ error: 'This legacy media item must be migrated to R2 before deleting' });
+    }
 
-    if (!['ok', 'not found'].includes(result.result)) {
-      console.error('Cloudinary delete failed:', result);
-      return res.status(502).json({ error: 'Failed to remove media from storage' });
+    await getR2Client().send(new DeleteObjectCommand({
+      Bucket: getR2BucketName(),
+      Key: media.publicId,
+    }));
+
+    try {
+      let continuationToken: string | undefined;
+      do {
+        const variants = await getR2Client().send(new ListObjectsV2Command({
+          Bucket: getR2BucketName(),
+          Prefix: `vault/users/${ownerId}/.variants/${media.id}/`,
+          ContinuationToken: continuationToken,
+        }));
+        const variantObjects = (variants.Contents || []).flatMap((object) =>
+          object.Key ? [{ Key: object.Key }] : [],
+        );
+        if (variantObjects.length) {
+          await getR2Client().send(new DeleteObjectsCommand({
+            Bucket: getR2BucketName(),
+            Delete: { Objects: variantObjects, Quiet: true },
+          }));
+        }
+        continuationToken = variants.IsTruncated ? variants.NextContinuationToken : undefined;
+      } while (continuationToken);
+    } catch (variantCleanupError) {
+      console.error('Failed to clean up transformed R2 variants:', variantCleanupError);
     }
 
     await prisma.media.delete({ where: { id: media.id } });
