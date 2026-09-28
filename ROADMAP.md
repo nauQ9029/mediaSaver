@@ -38,10 +38,10 @@
 - [x] **Apply the uploadLimiter middleware to /api/upload routes in upload.ts to protect Cloudinary signatures and media uploads from spam/abuse.**
 
 # Phase 7: Advanced Storage Engine & Streaming
-- [ ] **Chunked Upload Engine for Large Media**
-  - [ ] Implement client-side chunking (using File API) paired with a resumable backend upload endpoint to handle multi-gigabyte video uploads reliably.
-- [ ] **On-the-Fly Image Optimization & CDN Caching**
-  - [ ] Integrate dynamic image transformations (WebP auto-formatting, adaptive resolution sizing, blur-up placeholders) via Cloudinary URL manipulation or an AWS CloudFront/S3 edge layer.
+- [x] **Chunked Upload Engine for Large Media**
+  - [x] Implement client-side chunking (using File API) paired with a resumable backend upload endpoint to handle multi-gigabyte video uploads reliably.
+- [x] **On-the-Fly Image Optimization & Variant Caching**
+  - [x] Transform image variants with Sharp, cache private WebP variants in R2, and show a low-resolution blur-up placeholder. Verified transformed delivery, cache hits, and variant cleanup in the live app.
 
 # Phase 8: High-Performance Data Access & Caching
 - [x] **Redis Caching Layer for Hot Media & Sessions**
