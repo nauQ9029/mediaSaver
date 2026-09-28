@@ -1,27 +1,33 @@
 import React, { useEffect, useState } from 'react';
+import { apiClient } from '../api/client';
 
 interface OptimizedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src: string;
+  transformUrl?: string;
   alt: string;
   width?: number;
   quality?: number;
 }
 
-const getCDNTransformedUrl = (url: string, width = 800, quality = 80) => {
-  if (!url) return '';
+const getVariantUrl = (
+  transformUrl: string | undefined,
+  width: number,
+  quality: number,
+) => {
+  if (!transformUrl) return '';
 
-  try {
-    new URL(url);
-    // Cloudflare Image Resizing fetches the original URL, including its short-lived
-    // R2 signature, as the source. Encoding keeps its query out of the transform URL.
-    return `${window.location.origin}/cdn-cgi/image/width=${width},quality=${quality},format=auto/${encodeURIComponent(url)}`;
-  } catch {
-    return url;
-  }
+  const configuredBase = apiClient.defaults.baseURL || 'http://localhost:5000/api';
+  const base = new URL(`${configuredBase.replace(/\/+$/, '')}/`, window.location.origin);
+  const url = new URL(transformUrl, base);
+  url.searchParams.set('width', String(width));
+  url.searchParams.set('quality', String(quality));
+  url.searchParams.set('format', 'webp');
+  return url.toString();
 };
 
 export const OptimizedImage: React.FC<OptimizedImageProps> = ({
   src,
+  transformUrl,
   alt,
   width = 800,
   quality = 80,
@@ -31,18 +37,17 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const [useOriginal, setUseOriginal] = useState(false);
 
-  const mainUrl = getCDNTransformedUrl(src, width, quality);
-  const placeholderUrl = getCDNTransformedUrl(src, 24, 25);
+  const optimizedUrl = getVariantUrl(transformUrl, width, quality);
+  const placeholderUrl = getVariantUrl(transformUrl, 16, 20);
 
   useEffect(() => {
     setIsLoaded(false);
     setUseOriginal(false);
-  }, [src]);
+  }, [src, transformUrl]);
 
   return (
     <div className={`relative overflow-hidden bg-slate-900 ${className}`}>
-      {/* Low resolution image placeholder fades out after the optimized image loads. */}
-      {!isLoaded && (
+      {!isLoaded && placeholderUrl && (
         <img
           src={placeholderUrl}
           alt=""
@@ -51,22 +56,21 @@ export const OptimizedImage: React.FC<OptimizedImageProps> = ({
         />
       )}
 
-      {/* Main Image with Smooth Fade-in */}
       <img
-        src={useOriginal ? src : mainUrl}
+        src={useOriginal || !optimizedUrl ? src : optimizedUrl}
         alt={alt}
         loading="lazy"
         {...props}
         onLoad={() => setIsLoaded(true)}
         onError={(event) => {
-          if (!useOriginal && mainUrl !== src) {
+          if (!useOriginal && optimizedUrl && optimizedUrl !== src) {
             setUseOriginal(true);
             return;
           }
           setIsLoaded(true);
           props.onError?.(event);
         }}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${
+        className={`h-full w-full object-cover transition-opacity duration-300 ${
           isLoaded ? 'opacity-100' : 'opacity-0'
         }`}
       />

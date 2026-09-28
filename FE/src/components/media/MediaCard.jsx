@@ -50,6 +50,7 @@ const MediaCard = forwardRef(({ item, onClick, onEdit, onDelete }, ref) => {
         ) : (
           <OptimizedImage
             src={mediaUrl}
+            transformUrl={item.imageTransformUrl}
             alt={item.originalFilename || 'Media asset'}
             width={400}
             className="w-full h-full transition duration-300 group-hover:scale-105"
