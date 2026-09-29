@@ -1,5 +1,5 @@
 import '../setup.js';
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import app from '../../src/app.js';
 import { prisma } from '../../src/lib/prisma.js';
@@ -59,6 +59,98 @@ describe('Phase 3: Rate Limiting & Refresh Token Architecture', () => {
 
       const cookies = res.headers['set-cookie'];
       expect(cookies[0]).toMatch(/refreshToken=;/);
+    });
+
+    it('should rotate the refresh token and reject reuse of the old token', async () => {
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: user.email, password: rawPassword });
+
+      expect(loginRes.status).toBe(200);
+
+      const oldCookie = loginRes.headers['set-cookie']
+        .find((cookie) => cookie.startsWith('refreshToken='));
+
+      const refreshRes = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', oldCookie);
+
+      expect(refreshRes.status).toBe(200);
+      expect(refreshRes.body).toHaveProperty('accessToken');
+
+      const newCookie = refreshRes.headers['set-cookie']
+        .find((cookie) => cookie.startsWith('refreshToken='));
+
+      expect(newCookie).toBeDefined();
+      expect(newCookie).not.toBe(oldCookie);
+
+      const replayRes = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', oldCookie);
+
+      expect(replayRes.status).toBe(401);
+
+      // Reusing the old token must not invalidate the replacement token.
+      const nextRefreshRes = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', newCookie);
+
+      expect(nextRefreshRes.status).toBe(200);
+    });
+
+    it('should reject a refresh token that has been revoked by logout', async () => {
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: user.email, password: rawPassword });
+
+      const cookie = loginRes.headers['set-cookie']
+        .find((value) => value.startsWith('refreshToken='));
+
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Cookie', cookie);
+
+      expect(logoutRes.status).toBe(200);
+
+      const refreshRes = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', cookie);
+
+      expect(refreshRes.status).toBe(401);
+    });
+
+    it('should allow only one of two concurrent refresh requests to succeed', async () => {
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ email: user.email, password: rawPassword });
+
+      const cookie = loginRes.headers['set-cookie']
+        .find((value) => value.startsWith('refreshToken='));
+
+      const responses = await Promise.all([
+        request(app).post('/api/auth/refresh').set('Cookie', cookie),
+        request(app).post('/api/auth/refresh').set('Cookie', cookie),
+      ]);
+
+      expect(responses.filter((res) => res.status === 200)).toHaveLength(1);
+      expect(responses.filter((res) => res.status === 401)).toHaveLength(1);
+    });
+
+    it('should reject an expired refresh token', async () => {
+      const jwt = (await import('jsonwebtoken')).default;
+
+      const expiredToken = jwt.sign(
+        { userId: user.id, jti: 'expired-test-token' },
+        process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET,
+        { expiresIn: -1 }
+      );
+
+      const res = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', `refreshToken=${expiredToken}`);
+
+      expect(res.status).toBe(401);
+      expect(res.body).toHaveProperty('error');
     });
   });
 
