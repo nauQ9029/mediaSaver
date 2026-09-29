@@ -1,2 +1,0 @@
-ALTER TABLE "Media"
-ALTER COLUMN "storageProvider" SET DEFAULT 'R2';

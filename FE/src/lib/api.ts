@@ -28,6 +28,7 @@ api.interceptors.request.use((config) => {
 type RetriableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
 let isRefreshing = false;
+let refreshPromise: Promise<string> | null = null;
 let failedQueue: Array<{
   resolve: (token: string) => void;
   reject: (error: unknown) => void;
@@ -44,6 +45,28 @@ const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue = [];
 };
 
+/** Share refresh requests so StrictMode effects and 401 retries cannot rotate
+ * the same one-time refresh cookie concurrently.
+ */
+export const refreshAccessToken = (): Promise<string> => {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post<{ accessToken: string }>('/auth/refresh', {})
+      .then(({ data }) => {
+        if (!data.accessToken) {
+          throw new Error('Access token was not returned by the refresh endpoint');
+        }
+        setAccessToken(data.accessToken);
+        return data.accessToken;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+};
+
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
@@ -55,7 +78,8 @@ api.interceptors.response.use(
       !originalRequest ||
       originalRequest._retry ||
       url.includes('/auth/login') ||
-      url.includes('/auth/refresh')
+      url.includes('/auth/refresh') ||
+      url.includes('/auth/logout')
     ) {
       return Promise.reject(error);
     }
@@ -73,13 +97,9 @@ api.interceptors.response.use(
     isRefreshing = true;
 
     try {
-      const { data } = await api.post<{ accessToken: string }>(
-        '/auth/refresh',
-        {},
-      );
-      setAccessToken(data.accessToken);
-      processQueue(null, data.accessToken);
-      originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
+      const token = await refreshAccessToken();
+      processQueue(null, token);
+      originalRequest.headers.Authorization = `Bearer ${token}`;
       return api(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError);

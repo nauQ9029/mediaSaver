@@ -9,24 +9,42 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
+  id        String                      @id @default(cuid())
+  email     String                      @unique
   password  String
   media     Media[]
   albums    Album[]
   tags      Tag[]
-  resetPasswordToken   String?   // Hashed reset token
-  resetPasswordExpires DateTime? // Token expiration timestamp
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  refreshTokens        RefreshToken[]
+  resetPasswordToken   String?          // Hashed reset token
+  resetPasswordExpires DateTime?        // Token expiration timestamp
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @updatedAt
+}
+
+model RefreshToken {
+  id          String                    @id @default(cuid())
+  userId      String
+  familyId    String
+  tokenHash   String                    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  revokedAt   DateTime?
+  replacedById String?
+  createdAt   DateTime                  @default(now())
+
+  user        User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, familyId])
+  @@index([familyId, revokedAt])
 }
 
 model Media {
-  id                String      @id @default(cuid())
+  id                String              @id @default(cuid())
   ownerId           String
-  storageProvider   String      @default("R2")
-  cloudinaryAssetId String?     // optional for cloudinary R2
-  publicId          String?     // optional for cloudinary R2
+  storageProvider   String              @default("R2")
+  cloudinaryAssetId String?             // optional for cloudinary R2
+  publicId          String?             // optional for cloudinary R2
   secureUrl         String?
   originalFilename  String
   mimeType          String
@@ -38,10 +56,10 @@ model Media {
   takenAt           DateTime?
   latitude          Float?
   longitude         Float?
-  status            MediaStatus @default(READY)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  owner             User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  status            MediaStatus         @default(READY)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  owner             User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   albums            MediaAlbum[]
   tags              MediaTag[]
 

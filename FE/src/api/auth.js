@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { setAccessToken } from '../lib/api';
+import { refreshAccessToken as refreshSession, setAccessToken } from '../lib/api';
 
 export const loginUser = async (email, password) => {
   const { data } = await apiClient.post('/auth/login', { email, password });
@@ -17,14 +17,7 @@ export const registerUser = async (email, password) => {
   return data;
 };
 
-export const refreshAccessToken = async () => {
-  const { data } = await apiClient.post('/auth/refresh');
-  if (!data.accessToken) {
-    throw new Error('Access token was not returned by the refresh endpoint');
-  }
-  setAccessToken(data.accessToken);
-  return data.accessToken;
-};
+export const refreshAccessToken = () => refreshSession();
 
 export const requestPasswordReset = async (email) => {
   const { data } = await apiClient.post('/auth/forgot-password', { email });
@@ -46,6 +39,11 @@ export const fetchProfile = async () => {
   return data;
 };
 
-export const logoutUser = () => {
-  setAccessToken(null);
+export const logoutUser = async () => {
+  try {
+    await apiClient.post('/auth/logout');
+  } finally {
+    // Clear the in-memory access token even if the API request fails.
+    setAccessToken(null);
+  }
 };

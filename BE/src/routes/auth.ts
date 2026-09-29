@@ -46,6 +46,63 @@ const setRefreshTokenCookie = (res: Response, refreshToken: string) => {
   });
 };
 
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function createRefreshToken(userId: string): string {
+  return jwt.sign(
+    {
+      userId,
+      jti: crypto.randomUUID(),
+    },
+    getRefreshSecret(),
+    { expiresIn: '7d' }
+  );
+}
+
+function createAccessToken(user: { id: string; email: string }): string {
+  return jwt.sign(
+    { userId: user.id, email: user.email },
+    getJwtSecret(),
+    { expiresIn: '15m' }
+  );
+}
+
+/**
+ * Create a new refresh-token session or rotation record.
+ * Pass a Prisma client or transaction client.
+ */
+async function persistRefreshToken(
+  db: typeof prisma,
+  userId: string,
+  familyId: string,
+  refreshToken: string
+) {
+  return db.refreshToken.create({
+    data: {
+      userId,
+      familyId,
+      tokenHash: hashRefreshToken(refreshToken),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+    },
+  });
+}
+
+/**
+ * Issue a refresh token for a new login session.
+ */
+async function createRefreshSession(userId: string) {
+  const refreshToken = createRefreshToken(userId);
+  const familyId = crypto.randomUUID();
+
+  await persistRefreshToken(prisma, userId, familyId, refreshToken);
+
+  return refreshToken;
+}
+
 // REGISTER USER
 router.post('/register', authLimiter, async (req: Request, res: Response) => {
   try {
@@ -70,17 +127,8 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       select: { id: true, email: true, createdAt: true },
     });
 
-    const accessToken = jwt.sign(
-      { userId: user.id, email: user.email },
-      getJwtSecret(),
-      { expiresIn: '15m' }
-    );
-
-    const refreshToken = jwt.sign(
-      { userId: user.id },
-      getRefreshSecret(),
-      { expiresIn: '7d' }
-    );
+    const accessToken = createAccessToken(user);
+    const refreshToken = await createRefreshSession(user.id);
 
     setRefreshTokenCookie(res, refreshToken);
 
@@ -110,17 +158,8 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const accessToken = jwt.sign(
-      { userId: user.id, email: user.email },
-      getJwtSecret(),
-      { expiresIn: '15m' }
-    );
-
-    const refreshToken = jwt.sign(
-      { userId: user.id },
-      getRefreshSecret(),
-      { expiresIn: '7d' }
-    );
+    const accessToken = createAccessToken(user);
+    const refreshToken = await createRefreshSession(user.id);
 
     setRefreshTokenCookie(res, refreshToken);
 
@@ -164,7 +203,7 @@ router.post('/forgot-password', authLimiter, async (req: Request, res: Response)
     });
 
     const resetUrl = `${process.env.CLIENT_ORIGIN || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
-    
+
     try {
       await sendPasswordResetEmail({ to: user.email, resetUrl });
     } catch (emailError) {
@@ -254,40 +293,155 @@ router.post('/reset-password', async (req: Request, res: Response) => {
   }
 });
 
-// REFRESH ACCESS TOKEN
+// REFRESH ACCESS TOKEN AND ROTATE REFRESH TOKEN
 router.post('/refresh', async (req: Request, res: Response) => {
-  const refreshToken = req.cookies.refreshToken;
+  const refreshToken = req.cookies?.refreshToken;
 
   if (!refreshToken) {
     return res.status(401).json({ error: 'Refresh token required' });
   }
 
+  let decoded: { userId: string };
+
   try {
-    const decoded = jwt.verify(refreshToken, getRefreshSecret()) as { userId: string };
-    
-    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
-    if (!user) return res.status(401).json({ error: 'User not found' });
+    decoded = jwt.verify(
+      refreshToken,
+      getRefreshSecret()
+    ) as { userId: string };
+  } catch {
+    return res.status(401).json({
+      error: 'Invalid or expired refresh token',
+    });
+  }
 
-    const newAccessToken = jwt.sign(
-      { userId: user.id, email: user.email },
-      getJwtSecret(),
-      { expiresIn: '15m' }
-    );
+  const now = new Date();
+  const tokenHash = hashRefreshToken(refreshToken);
 
-    res.json({ accessToken: newAccessToken });
-  } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired refresh token' });
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const storedToken = await tx.refreshToken.findUnique({
+        where: { tokenHash },
+      });
+
+      if (
+        !storedToken ||
+        storedToken.userId !== decoded.userId ||
+        storedToken.expiresAt <= now ||
+        storedToken.consumedAt !== null ||
+        storedToken.revokedAt !== null
+      ) {
+        return null;
+      }
+
+      const user = await tx.user.findUnique({
+        where: { id: decoded.userId },
+        select: { id: true, email: true },
+      });
+
+      if (!user) return null;
+
+      // Atomically consume this token. Only one concurrent request
+      // can change consumedAt from null to a timestamp.
+      const consumed = await tx.refreshToken.updateMany({
+        where: {
+          id: storedToken.id,
+          tokenHash,
+          consumedAt: null,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: {
+          consumedAt: now,
+        },
+      });
+
+      if (consumed.count !== 1) {
+        return null;
+      }
+
+      const nextRefreshToken = createRefreshToken(user.id);
+
+      const nextToken = await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          familyId: storedToken.familyId,
+          tokenHash: hashRefreshToken(nextRefreshToken),
+          expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+        },
+      });
+
+      await tx.refreshToken.update({
+        where: { id: storedToken.id },
+        data: { replacedById: nextToken.id },
+      });
+
+      return {
+        user,
+        refreshToken: nextRefreshToken,
+      };
+    });
+
+    if (!result) {
+      return res.status(401).json({
+        error: 'Refresh token is invalid, expired, or already used',
+      });
+    }
+
+    const accessToken = createAccessToken(result.user);
+
+    setRefreshTokenCookie(res, result.refreshToken);
+
+    return res.json({ accessToken });
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    return res.status(500).json({
+      error: 'Failed to refresh session',
+    });
   }
 });
 
-// LOGOUT USER
-router.post('/logout', (req: Request, res: Response) => {
-  res.clearCookie('refreshToken', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-  });
-  res.json({ message: 'Logged out successfully' });
+// LOGOUT USER AND REVOKE THE CURRENT SESSION
+router.post('/logout', async (req: Request, res: Response) => {
+  const refreshToken = req.cookies?.refreshToken;
+
+  try {
+    if (refreshToken) {
+      const tokenHash = hashRefreshToken(refreshToken);
+
+      const storedToken = await prisma.refreshToken.findUnique({
+        where: { tokenHash },
+        select: { familyId: true },
+      });
+
+      if (storedToken) {
+        await prisma.refreshToken.updateMany({
+          where: {
+            familyId: storedToken.familyId,
+            revokedAt: null,
+          },
+          data: {
+            revokedAt: new Date(),
+          },
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Logout revocation error:', error);
+
+    // Do not report a successful logout if server-side revocation failed.
+    return res.status(500).json({
+      error: 'Failed to revoke session',
+    });
+  } finally {
+    // Clear the browser cookie even if the database operation fails.
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    });
+  }
+
+  return res.json({ message: 'Logged out successfully' });
 });
 
 // GET LOGGED-IN USER PROFILE

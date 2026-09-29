@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { apiClient } from './api/client';
 import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth';
+import { setAccessToken } from './lib/api';
 import { fetchMediaGallery, deleteMedia } from './api/media';
 import { uploadLargeFileInChunks } from './utils/chunkedUpload';
 
@@ -36,7 +37,9 @@ export default function App() {
         setUser(userData);
       })
       .catch(() => {
-        logoutUser();
+        // A failed restoration should not revoke a session that another
+        // concurrent refresh request may just have rotated.
+        setAccessToken(null);
         setUser(null);
       });
   }, []);
@@ -52,11 +55,17 @@ export default function App() {
     return <ResetPasswordPage onComplete={() => (window.location.href = '/')} />;
   }
 
-  const handleLogout = () => {
-    logoutUser();
-    setUser(null);
-    setItems([]);
-    setNextCursor(null);
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error('Logout request failed:', err);
+    } finally {
+      setUser(null);
+      setItems([]);
+      setNextCursor(null);
+      setSelectedMedia(null);
+    }
   };
 
   const loadGallery = async (cursor = null) => {
