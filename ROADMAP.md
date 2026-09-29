@@ -51,15 +51,110 @@
   - [x] Offload heavy processing (EXIF extraction, thumbnail generation, video transcode triggers) to background workers using BullMQ / Redis.
   - [x] Token Hydration & Security: Secured JWT access tokens in memory with httpOnly refresh token rotation on app boot.
 
-# Phase 9: Real-Time Features & Collaboration
-- [ ] **Real-Time Upload Progress & Dynamic Vault Updates**
-  - [ ] Implement Socket.IO or Server-Sent Events (SSE) to stream processing status (e.g., "Processing", "Optimizing", "Ready") to the frontend UI live.
-- [ ] **Time-Limited Presigned Media Sharing**
-  - [ ] Create temporary, secure share links (with dynamic expiration times and optional password protection) using cryptographically signed access tokens.
+# Phase 9: Production Reliability & Failure-Path Testing
+- [ ] **9.1 Authentication & Session Reliability**
+  - [ ] Test refresh-token rotation and revocation.
+  - [ ] Test concurrent refresh requests and prevent refresh races from causing unexpected logouts.
+  - [ ] Verify expired, revoked, and replayed refresh tokens are rejected.
+  - [ ] Verify logout invalidates the refresh session correctly.
 
-# Phase 10: Enterprise DevOps & CI/CD Pipeline
-- [ ] **Containerization & Local Multi-Service Orchestration**
-  - [ ] Package the Node.js backend, React frontend, PostgreSQL database, and Redis instance into a production-ready docker-compose.yml environment.
-- [ ] **Automated CI/CD Workflow with GitHub Actions**
-  - [ ] Set up GitHub Actions pipelines to automate linting (eslint), type checking (tsc), Vitest unit/integration runs, and automated deployment on merged PRs.
+- [ ] **9.2 Chunked Upload Reliability**
+  - [ ] Test interrupted uploads and successful resumption.
+  - [ ] Validate chunk ordering, completeness, and upload-session ownership.
+  - [ ] Make chunk retries safe and prevent duplicate or corrupted uploads.
+  - [ ] Clean up abandoned upload sessions and temporary chunks.
+  - [ ] Handle storage failures without leaving inconsistent database records.
 
+- [ ] **9.3 Media Authorization & Storage Consistency**
+  - [ ] Verify ownership checks on all media read, update, delete, and download paths.
+  - [ ] Verify private R2 variants cannot bypass application authorization.
+  - [ ] Ensure cached media cannot leak between users.
+  - [ ] Verify database, Cloudinary, and R2 cleanup behavior when deletion partially fails.
+  - [ ] Ensure media updates and deletions invalidate relevant caches.
+
+- [ ] **9.4 Background Worker Reliability**
+  - [ ] Configure and test BullMQ retry policies and backoff.
+  - [ ] Handle failed jobs and make failures observable through logs.
+  - [ ] Make processing idempotent where retries could repeat side effects.
+  - [ ] Test worker restarts and recovery of pending jobs.
+  - [ ] Prevent duplicate processing from producing inconsistent metadata or storage objects.
+
+# Phase 10: CI/CD & Reproducible Development Environment
+- [ ] **10.1 GitHub Actions**
+  - [ ] Create a GitHub Actions workflow triggered by pushes and pull requests.
+  - [ ] Run ESLint.
+  - [ ] Run TypeScript type checking with tsc --noEmit.
+  - [ ] Run Vitest unit and integration tests.
+  - [ ] Configure required checks to fail when a step fails.
+  - [ ] Provide the necessary test environment variables and service dependencies.
+
+- [ ] **10.2 Docker & Local Orchestration**
+  - [ ] Create or finalize the backend Dockerfile.
+  - [ ] Create or finalize the frontend Dockerfile.
+  - [ ] Configure Docker Compose for the application, PostgreSQL, and Redis.
+  - [ ] Configure environment variables without embedding secrets in images.
+  - [ ] Configure persistent database storage and health checks.
+  - [ ] Document Prisma migrations and database initialization.
+  - [ ] Verify the project can be started from a clean checkout using the documented steps.
+
+- [ ] **10.3 Deployment Workflow**
+  - [ ] Decide whether deployment remains manual or is triggered by a successful CI workflow.
+  - [ ] Document the deployment process and required environment variables.
+  - [ ] Keep production secrets in the deployment platform or GitHub Actions secrets.
+  - [ ] Verify the deployed application after releases.
+  - [ ] Add a rollback procedure appropriate to the existing hosting setup.
+
+# Phase 11: Portfolio Documentation & Interview Readiness
+- [ ] **11.1 README & Architecture**
+  - [ ] Write a project overview describing the problem and main features.
+  - [ ] Document the technology stack and key design decisions.
+  - [ ] Add an architecture diagram covering the frontend, Express API, PostgreSQL, Redis, workers, and storage providers.
+  - [ ] Document the upload and background-processing lifecycles.
+  - [ ] Document authentication, refresh-token rotation, and ownership enforcement.
+  - [ ] Provide .env.example and step-by-step local setup instructions.
+  - [ ] Document test commands and deployment instructions.
+  - [ ] Add screenshots and a link to the deployed demo.
+
+- [ ] **11.2 Engineering Evidence**
+  - [ ] Record measurable caching or processing improvements where benchmarks are available.
+  - [ ] Document important trade-offs and known limitations.
+  - [ ] Ensure all performance claims in the README and CV are supported by evidence.
+  - [ ] Remove or correct documentation that no longer matches the implementation.
+
+- [ ] **11.3 CV & Interview Preparation**
+  - [ ] Finalize three concise mediaSaver project bullets for the CV.
+  - [ ] Link the GitHub repository and deployed demo.
+  - [ ] Prepare a 3–5 minute project walkthrough.
+  - [ ] Prepare to explain authentication, authorization, uploads, caching, and background processing.
+  - [ ] Practice debugging and discussing failure scenarios from the actual implementation.
+
+# Phase 12: Real-Time Features & Collaboration
+
+Implement only after Phases 9–11 are complete or if a concrete requirement justifies the work.
+
+- [ ] **12.1 Real-Time Processing Updates**
+  - [ ] Decide whether SSE or Socket.IO is justified by the product requirements.
+  - [ ] Stream processing states such as Processing, Optimizing, Ready, and Failed.
+  - [ ] Update the frontend when processing state changes.
+  - [ ] Enforce user authorization on status subscriptions.
+  - [ ] Handle reconnects and retrieve the current status after reconnection.
+
+- [ ] **12.2 Time-Limited Media Sharing**
+  - [ ] Create temporary share links with configurable expiration.
+  - [ ] Use cryptographically secure, unguessable share tokens.
+  - [ ] Enforce expiration and revocation on every share access.
+  - [ ] Support optional password protection with secure password hashing.
+  - [ ] Prevent share links from bypassing private-storage access controls.
+  - [ ] Add tests for expired links, revoked links, and incorrect passwords.
+
+## Project Completion Criteria
+
+mediaSaver is ready for portfolio use when:
+
+- [ ] The deployed application's core functionality works.
+- [ ] Critical authorization and failure paths are covered by automated tests.
+- [ ] GitHub Actions runs linting, type checking, and tests successfully.
+- [ ] A new developer can configure and run the application using the README.
+- [ ] Architecture and important technical decisions are documented.
+- [ ] The repository, deployed demo, and CV links are ready to share.
+- [ ] The developer can explain the implementation, trade-offs, and limitations in an interview.
