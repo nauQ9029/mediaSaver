@@ -52,11 +52,12 @@
   - [x] Token Hydration & Security: Secured JWT access tokens in memory with httpOnly refresh token rotation on app boot.
 
 # Phase 9: Production Reliability & Failure-Path Testing
-- [ ] **9.1 Authentication & Session Reliability**
-  - [ ] Test refresh-token rotation and revocation.
-  - [ ] Test concurrent refresh requests and prevent refresh races from causing unexpected logouts.
-  - [ ] Verify expired, revoked, and replayed refresh tokens are rejected.
-  - [ ] Verify logout invalidates the refresh session correctly.
+- [x] **9.1 Authentication & Session Reliability**
+  - [x] Test refresh-token rotation and revocation.
+  - [x] Test concurrent refresh requests and prevent refresh races from causing unexpected logouts.
+  - [x] Verify expired, revoked, and replayed refresh tokens are rejected.
+  - [x] Verify logout invalidates the refresh session correctly.
+  - [ ] Coordinate refresh-token rotation across browser tabs **(Issue 38)**.
 
 - [ ] **9.2 Chunked Upload Reliability**
   - [ ] Test interrupted uploads and successful resumption.
