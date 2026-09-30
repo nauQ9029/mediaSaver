@@ -3,7 +3,11 @@ import { apiClient } from './api/client';
 import { fetchProfile, logoutUser, refreshAccessToken } from './api/auth';
 import { setAccessToken } from './lib/api';
 import { fetchMediaGallery, deleteMedia } from './api/media';
-import { uploadLargeFileInChunks } from './utils/chunkedUpload';
+import {
+  abortActiveMultipartUploads,
+  abortActiveMultipartUploadsOnPageHide,
+  uploadLargeFileInChunks,
+} from './utils/chunkedUpload';
 
 import Header from './components/Header';
 import MediaCard from './components/media/MediaCard';
@@ -22,6 +26,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const uploadAbortController = useRef(null);
+  const activeMultipartSession = useRef(null);
+  const cancelRequested = useRef(false);
   const [deleting, setDeleting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
 
@@ -44,6 +52,11 @@ export default function App() {
       });
   }, []);
 
+  useEffect(() => {
+    window.addEventListener('pagehide', abortActiveMultipartUploadsOnPageHide);
+    return () => window.removeEventListener('pagehide', abortActiveMultipartUploadsOnPageHide);
+  }, []);
+
   const handleAuthSuccess = (userData) => {
     setUser(userData);
     setIsAuthOpen(false);
@@ -56,6 +69,7 @@ export default function App() {
   }
 
   const handleLogout = async () => {
+    await abortActiveMultipartUploads();
     try {
       await logoutUser();
     } catch (err) {
@@ -128,6 +142,10 @@ export default function App() {
     }
 
     try {
+      uploadAbortController.current = new AbortController();
+      cancelRequested.current = false;
+      activeMultipartSession.current = null;
+      setUploadError('');
       setUploading(true);
       setUploadProgress(0);
 
@@ -137,6 +155,8 @@ export default function App() {
         savedItem = await uploadLargeFileInChunks({
           file,
           onProgress: (progress) => setUploadProgress(progress),
+          signal: uploadAbortController.current.signal,
+          onSession: (session) => { activeMultipartSession.current = session; },
         });
       } else {
         const { data: presignRes } = await apiClient.post('/upload/r2/presign', {
@@ -180,11 +200,42 @@ export default function App() {
       setItems((prev) => [savedItem, ...prev]);
     } catch (err) {
       console.error('Upload process failed:', err);
-      alert(err.message || 'Upload failed. Check backend/network console.');
+      if (cancelRequested.current) {
+        if (!activeMultipartSession.current) {
+          setUploadError('Upload cancelled.');
+        } else {
+          setUploadError(`Could not cancel upload: ${err.message || 'abort failed'}`);
+        }
+      } else {
+        alert(err.message || 'Upload failed. Check backend/network console.');
+      }
     } finally {
+      uploadAbortController.current = null;
+      activeMultipartSession.current = null;
       setUploading(false);
       setUploadProgress(0);
       e.target.value = '';
+    }
+  };
+
+  const handleCancelUpload = async () => {
+    const session = activeMultipartSession.current;
+    cancelRequested.current = true;
+    uploadAbortController.current?.abort();
+    if (!session) {
+      setUploadError('Stopping upload…');
+      return;
+    }
+
+    try {
+      await apiClient.post('/upload/r2/multipart/abort', session);
+      activeMultipartSession.current = null;
+      setUploadError('Upload cancelled.');
+    } catch (err) {
+      console.error('Failed to cancel multipart upload:', err);
+      cancelRequested.current = false;
+      setUploadError(`Could not cancel upload: ${err.response?.data?.error || err.message || 'abort failed'}`);
+      uploadAbortController.current = null;
     }
   };
 
@@ -213,6 +264,7 @@ export default function App() {
           user={user}
           status={status}
           uploading={uploading}
+          onCancelUpload={handleCancelUpload}
           uploadProgress={uploadProgress}
           onFileUpload={handleFileUpload}
           onLoginClick={() => setIsAuthOpen(true)}
@@ -232,6 +284,15 @@ export default function App() {
               />
             </div>
           </div>
+        )}
+
+        {uploading && (
+          <div className="my-4 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4">
+            <span className="text-sm text-slate-300">{uploadError || 'Upload in progress'}</span>
+          </div>
+        )}
+        {!uploading && uploadError && (
+          <p role="status" className="my-4 text-sm text-amber-300">{uploadError}</p>
         )}
 
         {!user && (

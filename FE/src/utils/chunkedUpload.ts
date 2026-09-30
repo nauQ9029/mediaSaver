@@ -1,9 +1,54 @@
 import { apiClient } from '../api/client';
+import { getAccessToken } from '../lib/api';
+
+export class MultipartUploadCancelledError extends Error {
+  constructor() {
+    super('Upload cancelled.');
+    this.name = 'MultipartUploadCancelledError';
+  }
+}
+
+type MultipartSession = { key: string; uploadId: string };
+const activeMultipartSessions = new Map<symbol, MultipartSession>();
+
+export const abortActiveMultipartUploads = async () => {
+  const sessions = [...activeMultipartSessions.values()];
+  const results = await Promise.allSettled(
+    sessions.map(({ key, uploadId }) =>
+      apiClient.post('/upload/r2/multipart/abort', { key, uploadId }),
+    ),
+  );
+  results.forEach((result) => {
+    if (result.status === 'rejected') {
+      console.error('Failed to abort multipart upload before logout:', result.reason);
+    }
+  });
+};
+
+export const abortActiveMultipartUploadsOnPageHide = () => {
+  const token = getAccessToken();
+  if (!token) return;
+  const baseUrl = apiClient.defaults.baseURL || window.location.origin;
+  for (const { key, uploadId } of activeMultipartSessions.values()) {
+    void fetch(`${baseUrl.replace(/\/$/, '')}/upload/r2/multipart/abort`, {
+      method: 'POST',
+      keepalive: true,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ key, uploadId }),
+    }).catch((error) => console.error('Page-exit multipart abort failed:', error));
+  }
+};
 
 interface ChunkedUploadOptions {
   file: File;
   onProgress?: (progress: number) => void;
   maxRetries?: number;
+  signal?: AbortSignal;
+  onSession?: (session: MultipartSession | null) => void;
 }
 
 const CHUNK_SIZE = 10 * 1024 * 1024;
@@ -13,6 +58,8 @@ export const uploadLargeFileInChunks = async ({
   file,
   onProgress,
   maxRetries = 3,
+  signal,
+  onSession,
 }: ChunkedUploadOptions) => {
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   if (file.size <= CHUNK_SIZE || file.size > MAX_UPLOAD_BYTES) {
@@ -23,7 +70,27 @@ export const uploadLargeFileInChunks = async ({
   let uploadId = '';
   let key = '';
   let completedParts: { PartNumber: number; ETag: string }[] = [];
+  const sessionToken = Symbol('multipart-upload');
+  let activeSession: MultipartSession | null = null;
+  const activeRequests = new Set<XMLHttpRequest>();
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+    activeRequests.forEach((xhr) => xhr.abort());
+  };
+  const throwIfCancelled = () => {
+    if (cancelled || signal?.aborted) throw new MultipartUploadCancelledError();
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
+  const setSession = (session: MultipartSession | null) => {
+    activeSession = session;
+    if (session) activeMultipartSessions.set(sessionToken, session);
+    else activeMultipartSessions.delete(sessionToken);
+    onSession?.(session);
+  };
 
+  try {
+  throwIfCancelled();
   // Check local session and verify against R2 remote state
   const savedSession = localStorage.getItem(storageKey);
   if (savedSession) {
@@ -40,9 +107,11 @@ export const uploadLargeFileInChunks = async ({
 
         uploadId = cachedUploadId;
         key = cachedKey;
+        setSession({ key, uploadId });
         completedParts = verifyRes.data.data.parts || [];
       }
     } catch {
+        if (cancelled || signal?.aborted) throw new MultipartUploadCancelledError();
       localStorage.removeItem(storageKey);
       uploadId = '';
       key = '';
@@ -52,6 +121,7 @@ export const uploadLargeFileInChunks = async ({
 
   // Initiate session if no valid remote upload session exists
   if (!uploadId || !key) {
+    throwIfCancelled();
     const initRes = await apiClient.post('/upload/r2/multipart/initiate', {
       fileName: file.name,
       fileType: file.type,
@@ -59,6 +129,8 @@ export const uploadLargeFileInChunks = async ({
     });
     uploadId = initRes.data.data.uploadId;
     key = initRes.data.data.key;
+    setSession({ key, uploadId });
+    throwIfCancelled();
 
     localStorage.setItem(
       storageKey,
@@ -74,6 +146,7 @@ export const uploadLargeFileInChunks = async ({
 
   // Sequential part upload with retries
   for (let index = 0; index < totalChunks; index++) {
+    throwIfCancelled();
     const partNumber = index + 1;
     if (completedPartNumbers.has(partNumber)) continue;
 
@@ -87,6 +160,7 @@ export const uploadLargeFileInChunks = async ({
       partNumber,
     });
     const { presignedUrl } = partRes.data.data;
+    throwIfCancelled();
 
     let attempt = 0;
     let etag = '';
@@ -94,6 +168,7 @@ export const uploadLargeFileInChunks = async ({
       try {
         etag = await new Promise<string>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
+          activeRequests.add(xhr);
           xhr.open('PUT', presignedUrl, true);
           xhr.setRequestHeader(
             'Content-Type',
@@ -111,6 +186,7 @@ export const uploadLargeFileInChunks = async ({
           };
 
           xhr.onload = () => {
+            activeRequests.delete(xhr);
             if (xhr.status === 200 || xhr.status === 204) {
               const etagHeader = xhr.getResponseHeader('ETag');
               if (!etagHeader) {
@@ -122,12 +198,22 @@ export const uploadLargeFileInChunks = async ({
             }
           };
 
-          xhr.onerror = () => reject(new Error(`Network error on part ${partNumber}`));
+          xhr.onerror = () => {
+            activeRequests.delete(xhr);
+            reject(new Error(`Network error on part ${partNumber}`));
+          };
+          xhr.onabort = () => {
+            activeRequests.delete(xhr);
+            reject(new MultipartUploadCancelledError());
+          };
           xhr.send(chunk);
         });
 
         break;
       } catch (err) {
+        if (cancelled || signal?.aborted || err instanceof MultipartUploadCancelledError) {
+          throw new MultipartUploadCancelledError();
+        }
         attempt++;
         if (attempt >= maxRetries) throw err;
         await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
@@ -142,6 +228,7 @@ export const uploadLargeFileInChunks = async ({
   }
 
   // Finalize upload
+  throwIfCancelled();
   const completeRes = await apiClient.post('/upload/r2/multipart/complete', {
     key,
     uploadId,
@@ -152,5 +239,12 @@ export const uploadLargeFileInChunks = async ({
   });
 
   localStorage.removeItem(storageKey);
+  setSession(null);
   return completeRes.data.data;
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    activeRequests.forEach((xhr) => xhr.abort());
+    activeRequests.clear();
+    if (!activeSession) activeMultipartSessions.delete(sessionToken);
+  }
 };

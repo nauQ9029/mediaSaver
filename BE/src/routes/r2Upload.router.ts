@@ -1,7 +1,12 @@
 import { Router, Response } from 'express';
 import {
-  CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand,
-  ListPartsCommand, HeadObjectCommand, PutObjectCommand
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  ListPartsCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { authenticateToken, AuthRequest } from '../middleware/auth.js';
@@ -18,6 +23,75 @@ const ALLOWED_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
   'video/mp4', 'video/webm', 'video/quicktime',
 ]);
+
+
+type ActiveMultipartSessionResult =
+  | { session: { id: string; userId: string; key: string; uploadId: string }; error?: never }
+  | { session?: never; error: 'NOT_FOUND' | 'EXPIRED' | 'INACTIVE' };
+
+async function requireActiveMultipartSession(
+  userId: string,
+  key: unknown,
+  uploadId: unknown,
+): Promise<ActiveMultipartSessionResult> {
+  if (
+    typeof key !== 'string' ||
+    typeof uploadId !== 'string' ||
+    !key.startsWith(`vault/users/${userId}/`) ||
+    !uploadId.trim()
+  ) {
+    return { error: 'NOT_FOUND' };
+  }
+
+  const session = await prisma.multipartUploadSession.findUnique({
+    where: { uploadId },
+    select: {
+      id: true,
+      userId: true,
+      key: true,
+      uploadId: true,
+      status: true,
+      expiresAt: true,
+    },
+  });
+
+  // Do not reveal whether another user's session exists.
+  if (!session || session.userId !== userId || session.key !== key) {
+    return { error: 'NOT_FOUND' };
+  }
+
+  if (session.status !== 'ACTIVE') {
+    return { error: 'INACTIVE' };
+  }
+
+  if (session.expiresAt.getTime() <= Date.now()) {
+    return { error: 'EXPIRED' };
+  }
+
+  return {
+    session: {
+      id: session.id,
+      userId: session.userId,
+      key: session.key,
+      uploadId: session.uploadId,
+    },
+  };
+}
+
+function respondToSessionError(
+  res: Response,
+  error: 'NOT_FOUND' | 'EXPIRED' | 'INACTIVE',
+) {
+  if (error === 'NOT_FOUND') {
+    return res.status(404).json({ error: 'Multipart session not found' });
+  }
+
+  if (error === 'EXPIRED') {
+    return res.status(410).json({ error: 'Multipart session expired' });
+  }
+
+  return res.status(409).json({ error: 'Multipart session is no longer active' });
+}
 
 // POST /api/upload/r2/presign (Single file <= 100MB)
 router.post('/r2/presign', authenticateToken, uploadLimiter, async (req: AuthRequest, res: Response) => {
@@ -140,25 +214,75 @@ router.post('/r2/multipart/initiate', authenticateToken, uploadLimiter, async (r
       return res.status(400).json({ error: 'Invalid file name, type, or size' });
     }
 
-    const uniqueKey = `vault/users/${userId}/${randomUUID()}`;
+    const key = `vault/users/${userId}/${randomUUID()}`;
 
-    const command = new CreateMultipartUploadCommand({
-      Bucket: getR2BucketName(),
-      Key: uniqueKey,
-      ContentType: fileType,
-    });
+    // create the multipart upload on R2
+    const multipart = await getR2Client().send(
+      new CreateMultipartUploadCommand({
+        Bucket: getR2BucketName(),
+        Key: key,
+        ContentType: fileType,
+      }),
+    );
 
-    const multipart = await getR2Client().send(command);
+    const uploadId = multipart.UploadId;
 
-    res.json({
+    if (!uploadId) {
+      console.error('R2 did not return an upload ID');
+
+      return res.status(502).json({
+        error: 'R2 did not return a multipart upload ID',
+      });
+    }
+
+    // persist the session only after R2 returns an upload ID.
+    try {
+      await prisma.multipartUploadSession.create({
+        data: {
+          userId,
+          uploadId,
+          key,
+          fileName: fileName.trim(),
+          fileType,
+          fileSize: BigInt(fileSize),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+    } catch (dbError) {
+      // R2 and PostgreSQL are separate systems
+      // try to clean up the R2 upload if session persistence fails
+      try {
+        await getR2Client().send(
+          new AbortMultipartUploadCommand({
+            Bucket: getR2BucketName(),
+            Key: key,
+            UploadId: uploadId,
+          }),
+        );
+      } catch (abortError) {
+        console.error(
+          'Failed to abort orphaned R2 multipart upload:',
+          abortError,
+        );
+      }
+
+      throw dbError;
+    }
+
+    // preserve the response expected by the frontend.
+    return res.status(201).json({
       success: true,
-      data: { uploadId: multipart.UploadId, key: uniqueKey },
+      data: { uploadId, key },
     });
   } catch (error) {
     console.error('Failed to initiate multipart upload:', error);
-    res.status(500).json({ error: 'Failed to initiate multipart upload' });
+
+    return res.status(500).json({
+      error: 'Failed to initiate multipart upload',
+    });
   }
-});
+},
+);
 
 // GET /api/upload/r2/multipart/parts (Verify active multipart state on R2)
 router.get('/r2/multipart/parts', authenticateToken, async (req: AuthRequest, res: Response) => {
@@ -171,6 +295,12 @@ router.get('/r2/multipart/parts', authenticateToken, async (req: AuthRequest, re
 
     if (!key?.startsWith(expectedPrefix) || !uploadId) {
       return res.status(400).json({ error: 'Invalid key or uploadId' });
+    }
+
+    const result = await requireActiveMultipartSession(userId, key, uploadId);
+
+    if (result.error) {
+      return respondToSessionError(res, result.error);
     }
 
     const parts: { PartNumber: number; ETag: string }[] = [];
@@ -213,6 +343,12 @@ router.post('/r2/multipart/presign-part', authenticateToken, async (req: AuthReq
       return res.status(400).json({ error: 'Invalid multipart presign parameters' });
     }
 
+    const result = await requireActiveMultipartSession(userId, key, uploadId);
+
+    if (result.error) {
+      return respondToSessionError(res, result.error);
+    }
+
     const command = new UploadPartCommand({
       Bucket: getR2BucketName(),
       Key: key,
@@ -249,6 +385,12 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
       parts.length > MAX_PARTS
     ) {
       return res.status(400).json({ error: 'Invalid completion metadata' });
+    }
+
+    const result = await requireActiveMultipartSession(userId, key, uploadId);
+
+    if (result.error) {
+      return respondToSessionError(res, result.error);
     }
 
     const uploadedParts = new Map<number, string>();
@@ -291,7 +433,9 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
         error: 'Completion must include every uploaded part exactly once'
       });
     }
-    const expectedPartCount = Math.ceil(MAX_UPLOAD_BYTES / (10 * 1024 * 1024));
+
+    const MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MB
+    const expectedPartCount = Math.ceil(MAX_UPLOAD_BYTES / MIN_PART_SIZE); // 10.000
     if (parts.length > expectedPartCount) {
       return res.status(400).json({ error: 'Too many multipart parts' });
     }
@@ -301,11 +445,14 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
       Key: key,
       UploadId: uploadId,
       MultipartUpload: {
-        Parts: parts.map((p: { PartNumber: number; ETag: string }) => ({
-          PartNumber: p.PartNumber,
-          ETag: p.ETag,
-        })),
-      },
+        Parts: parts.map((p: { PartNumber: number; ETag: string }) => {
+          const rawETag = p.ETag.replace(/"/g, '');
+          return {
+            PartNumber: p.PartNumber,
+            ETag: `"${rawETag}"`,
+          };
+        }),
+      }
     });
 
     await getR2Client().send(command);
@@ -333,6 +480,31 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
       },
     });
 
+    // the R2 object has been completed and verified, and its
+    // media record has been persisted successfully.
+    const sessionUpdate = await prisma.multipartUploadSession.updateMany({
+      where: {
+        id: result.session.id,
+        status: 'ACTIVE',
+        expiresAt: { gt: new Date() },
+      },
+      data: {
+        status: 'COMPLETED',
+        completedAt: new Date(),
+      },
+    });
+
+    if (sessionUpdate.count !== 1) {
+      console.error(
+        'Media was created, but the multipart session status could not be updated',
+        { uploadId },
+      );
+
+      return res.status(409).json({
+        error: 'Media was created, but the multipart session state changed',
+      });
+    }
+
     try {
       const keys = await redis.keys(`cache:media:user:${userId}:*`);
       if (keys.length) await redis.del(...keys);
@@ -349,5 +521,103 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
     res.status(500).json({ error: 'Failed to assemble multipart upload' });
   }
 });
+
+// POST /api/upload/r2/multipart/abort
+router.post('/r2/multipart/abort', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { key, uploadId } = req.body;
+
+    if (
+      typeof key !== 'string' ||
+      typeof uploadId !== 'string' ||
+      !key.startsWith(`vault/users/${userId}/`) ||
+      !uploadId.trim()
+    ) {
+      return res.status(400).json({
+        error: 'Invalid multipart abort parameters',
+      });
+    }
+
+    // Look up the session and verify ownership.
+    // Unlike requireActiveMultipartSession(), this deliberately
+    // allows an expired ACTIVE session to be aborted.
+    const session = await prisma.multipartUploadSession.findUnique({
+      where: { uploadId },
+      select: {
+        id: true,
+        userId: true,
+        key: true,
+        status: true,
+      },
+    });
+
+    if (
+      !session ||
+      session.userId !== userId ||
+      session.key !== key
+    ) {
+      return res.status(404).json({
+        error: 'Multipart session not found',
+      });
+    }
+
+    if (session.status !== 'ACTIVE') {
+      return res.status(409).json({
+        error: 'Multipart session is no longer active',
+      });
+    }
+
+    // Abort the R2 upload first. If R2 fails, leave the database
+    // session ACTIVE so the client can retry the cleanup.
+    try {
+      await getR2Client().send(
+        new AbortMultipartUploadCommand({
+          Bucket: getR2BucketName(),
+          Key: key,
+          UploadId: uploadId,
+        }),
+      );
+    } catch (r2Error: any) {
+      if (r2Error.name !== 'NoSuchUpload' && r2Error.$metadata?.httpStatusCode !== 404) {
+        throw r2Error;
+      }
+    }
+
+    // Conditional update protects against overwriting a status
+    // change made by another request.
+    const updated = await prisma.multipartUploadSession.updateMany({
+      where: {
+        id: session.id,
+        status: 'ACTIVE',
+      },
+      data: {
+        status: 'ABORTED',
+        abortedAt: new Date(),
+      },
+    });
+
+    if (updated.count !== 1) {
+      return res.status(409).json({
+        error: 'Multipart session state changed; please check its status',
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: { uploadId, status: 'ABORTED' },
+    });
+  } catch (error) {
+    console.error('Failed to abort multipart upload:', error);
+    return res.status(500).json({
+      error: 'Failed to abort multipart upload',
+    });
+  }
+},
+);
 
 export default router;
