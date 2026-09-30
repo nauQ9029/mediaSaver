@@ -265,18 +265,31 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
       partNumberMarker = listedParts.NextPartNumberMarker;
     }
     const requestedPartNumbers = new Set<number>();
+    let previousPartNumber = 0;
+
     for (const part of parts) {
-      if (!Number.isSafeInteger(part?.PartNumber) || part.PartNumber < 1 ||
-          part.PartNumber > MAX_PARTS || typeof part.ETag !== 'string' ||
-          requestedPartNumbers.has(part.PartNumber) ||
-          uploadedParts.get(part.PartNumber) !== part.ETag.replace(/\"/g, '')) {
-        return res.status(400).json({ error: 'Multipart parts do not match the uploaded parts' });
+      if (
+        !Number.isSafeInteger(part?.PartNumber) ||
+        part.PartNumber < 1 ||
+        part.PartNumber > MAX_PARTS ||
+        typeof part.ETag !== 'string' ||
+        requestedPartNumbers.has(part.PartNumber) ||
+        part.PartNumber <= previousPartNumber ||
+        uploadedParts.get(part.PartNumber) !== part.ETag.replace(/"/g, '')
+      ) {
+        return res.status(400).json({
+          error: 'Multipart parts do not match the uploaded parts'
+        });
       }
+
       requestedPartNumbers.add(part.PartNumber);
+      previousPartNumber = part.PartNumber;
     }
     if (requestedPartNumbers.size !== uploadedParts.size ||
-        [...requestedPartNumbers].some((number) => !uploadedParts.has(number))) {
-      return res.status(400).json({ error: 'Completion must include every uploaded part exactly once' });
+      [...requestedPartNumbers].some((number) => !uploadedParts.has(number))) {
+      return res.status(400).json({
+        error: 'Completion must include every uploaded part exactly once'
+      });
     }
     const expectedPartCount = Math.ceil(MAX_UPLOAD_BYTES / (10 * 1024 * 1024));
     if (parts.length > expectedPartCount) {
