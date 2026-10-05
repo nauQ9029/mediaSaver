@@ -46,6 +46,7 @@ model Media {
   storageProvider   String              @default("R2")
   cloudinaryAssetId String?             // optional for cloudinary R2
   publicId          String?             // optional for cloudinary R2
+  multipartUploadId String?              @unique
   secureUrl         String?
   originalFilename  String
   mimeType          String
