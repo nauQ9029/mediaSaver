@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function Header({ user, status, uploading, onFileUpload, onCancelUpload, onLoginClick, onLogout }) {
+export default function Header({ user, status, uploading, onFileUpload, onChooseUpload, onCancelUpload, onLoginClick, onLogout }) {
   return (
     <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6 mb-8">
       <div>
@@ -25,17 +25,22 @@ export default function Header({ user, status, uploading, onFileUpload, onCancel
                 Cancel upload
               </button>
             )}
-            {/* Upload Button */}
-            <label className="cursor-pointer bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm transition flex items-center gap-2">
-              <span>{uploading ? 'Uploading...' : 'Upload Media'}</span>
-              <input
-                type="file"
-                onChange={onFileUpload}
-                className="hidden"
-                accept="image/*,video/*"
-                disabled={uploading}
-              />
-            </label>
+            <button
+              type="button"
+              onClick={onChooseUpload}
+              disabled={uploading}
+              className="cursor-pointer bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm transition"
+            >
+              Upload Media
+            </button>
+            <input
+              id="media-upload-input"
+              type="file"
+              onChange={onFileUpload}
+              className="hidden"
+              accept="image/*,video/*"
+              disabled={uploading}
+            />
 
             {/* Logout Button */}
             <button
