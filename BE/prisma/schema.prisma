@@ -9,17 +9,18 @@ datasource db {
 }
 
 model User {
-  id        String                      @id @default(cuid())
-  email     String                      @unique
+  id        String                                      @id @default(cuid())
+  email     String                                      @unique
   password  String
   media     Media[]
   albums    Album[]
   tags      Tag[]
-  refreshTokens        RefreshToken[]
-  resetPasswordToken   String?          // Hashed reset token
-  resetPasswordExpires DateTime?        // Token expiration timestamp
-  createdAt DateTime                    @default(now())
-  updatedAt DateTime                    @updatedAt
+  refreshTokens RefreshToken[]
+  multipartUploadSessions MultipartUploadSession[]
+  resetPasswordToken String?                            // Hashed reset token
+  resetPasswordExpires DateTime?                        // Token expiration timestamp
+  createdAt DateTime                                    @default(now())
+  updatedAt DateTime                                    @updatedAt
 }
 
 model RefreshToken {
@@ -45,6 +46,7 @@ model Media {
   storageProvider   String              @default("R2")
   cloudinaryAssetId String?             // optional for cloudinary R2
   publicId          String?             // optional for cloudinary R2
+  multipartUploadId String?              @unique
   secureUrl         String?
   originalFilename  String
   mimeType          String
@@ -119,4 +121,31 @@ enum MediaStatus {
   PENDING
   READY
   FAILED
+}
+
+model MultipartUploadSession {
+  id          String                     @id @default(cuid())
+  userId      String
+  uploadId    String                     @unique
+  key         String                     @unique
+  fileName    String
+  fileType    String
+  fileSize    BigInt
+  status      MultipartUploadStatus      @default(ACTIVE)
+  expiresAt   DateTime
+  completedAt DateTime?
+  abortedAt   DateTime?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+
+  user        User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+}
+
+enum MultipartUploadStatus {
+  ACTIVE
+  COMPLETED
+  ABORTED
 }

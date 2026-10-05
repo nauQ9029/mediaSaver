@@ -59,12 +59,12 @@
   - [x] Verify logout invalidates the refresh session correctly.
   - [ ] Coordinate refresh-token rotation across browser tabs **(Issue 38)**.
 
-- [ ] **9.2 Chunked Upload Reliability**
-  - [ ] Test interrupted uploads and successful resumption.
-  - [ ] Validate chunk ordering, completeness, and upload-session ownership.
-  - [ ] Make chunk retries safe and prevent duplicate or corrupted uploads.
-  - [ ] Clean up abandoned upload sessions and temporary chunks.
-  - [ ] Handle storage failures without leaving inconsistent database records.
+- [x] **9.2 Chunked Upload Reliability**
+  - [x] Backend completion validation: Reject missing, duplicate, unordered, out-of-range, or mismatched parts without completing the upload.
+  - [x] Session ownership and lifecycle: Reject another user's key, invalid upload IDs, and inactive sessions; add a way to abort an upload.
+  - [x] Frontend resume and retries: Resume after interruption, refresh expired presigned URLs, and maintain accurate progress.
+  - [x] Completion failure recovery: Prevent duplicate media records and recover if R2 succeeds but database persistence fails.
+  - [x] Abandoned-session cleanup: Expire stale sessions and abort unfinished multipart uploads.
 
 - [ ] **9.3 Media Authorization & Storage Consistency**
   - [ ] Verify ownership checks on all media read, update, delete, and download paths.
