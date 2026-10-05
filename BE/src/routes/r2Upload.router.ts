@@ -26,7 +26,7 @@ const ALLOWED_TYPES = new Set([
 
 
 type ActiveMultipartSessionResult =
-  | { session: { id: string; userId: string; key: string; uploadId: string }; error?: never }
+  | { session: { id: string; userId: string; key: string; uploadId: string; fileName: string; fileType: string; fileSize: bigint; expiresAt: Date }; error?: never }
   | { session?: never; error: 'NOT_FOUND' | 'EXPIRED' | 'INACTIVE' };
 
 async function requireActiveMultipartSession(
@@ -50,6 +50,9 @@ async function requireActiveMultipartSession(
       userId: true,
       key: true,
       uploadId: true,
+      fileName: true,
+      fileType: true,
+      fileSize: true,
       status: true,
       expiresAt: true,
     },
@@ -74,6 +77,10 @@ async function requireActiveMultipartSession(
       userId: session.userId,
       key: session.key,
       uploadId: session.uploadId,
+      fileName: session.fileName,
+      fileType: session.fileType,
+      fileSize: session.fileSize,
+      expiresAt: session.expiresAt,
     },
   };
 }
@@ -189,7 +196,8 @@ router.post('/r2/complete', authenticateToken, async (req: AuthRequest, res: Res
       console.error('Failed to invalidate media gallery cache:', cacheError);
     }
 
-    res.status(201).json({
+    // Completion is idempotent: retries return the same persisted media result.
+    res.json({
       success: true,
       data: { ...media, deliveryUrl: await getR2ObjectUrl(key) },
     });
@@ -317,10 +325,70 @@ router.get('/r2/multipart/parts', authenticateToken, async (req: AuthRequest, re
       partNumberMarker = response.NextPartNumberMarker;
     }
 
-    res.json({ success: true, data: { parts } });
+    res.json({
+      success: true,
+      data: {
+        parts,
+        completed: false,
+        session: {
+          fileName: result.session.fileName,
+          fileType: result.session.fileType,
+          fileSize: Number(result.session.fileSize),
+          expiresAt: result.session.expiresAt,
+        },
+      },
+    });
   } catch (error) {
     console.error('Failed to list parts:', error);
-    res.status(400).json({ error: 'Multipart session expired or invalid' });
+    const r2Error = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (r2Error.name === 'NoSuchUpload' || r2Error.$metadata?.httpStatusCode === 404) {
+      const userId = req.user?.userId;
+      const { key, uploadId } = req.query as { key?: string; uploadId?: string };
+      if (userId && key && uploadId) {
+        try {
+          const session = await prisma.multipartUploadSession.findUnique({
+            where: { uploadId },
+            select: { id: true, userId: true, key: true, fileName: true, fileType: true, fileSize: true, status: true },
+          });
+          if (session?.userId === userId && session.key === key && session.status === 'ACTIVE') {
+            try {
+              const head = await getR2Client().send(new HeadObjectCommand({ Bucket: getR2BucketName(), Key: key }));
+              if (
+                head.ContentLength === Number(session.fileSize) &&
+                head.ContentType === session.fileType
+              ) {
+                return res.json({
+                  success: true,
+                  data: {
+                    parts: [],
+                    completed: true,
+                    session: {
+                      fileName: session.fileName,
+                      fileType: session.fileType,
+                      fileSize: Number(session.fileSize),
+                      expiresAt: null,
+                    },
+                  },
+                });
+              }
+            } catch (headError) {
+              const objectError = headError as { name?: string; $metadata?: { httpStatusCode?: number } };
+              if (objectError.name !== 'NotFound' && objectError.$metadata?.httpStatusCode !== 404) throw headError;
+            }
+
+            await prisma.multipartUploadSession.updateMany({
+              where: { id: session.id, status: 'ACTIVE' },
+              data: { status: 'ABORTED', abortedAt: new Date() },
+            });
+          }
+        } catch (dbError) {
+          console.error('Could not reconcile missing multipart upload:', dbError);
+          return res.status(500).json({ error: 'Failed to reconcile multipart upload state' });
+        }
+      }
+      return res.status(410).json({ error: 'Multipart upload no longer exists on storage' });
+    }
+    return res.status(500).json({ error: 'Failed to retrieve multipart upload progress' });
   }
 });
 
@@ -381,7 +449,6 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
       typeof mimeType !== 'string' || !ALLOWED_TYPES.has(mimeType) ||
       !Number.isSafeInteger(expectedFileSize) || expectedFileSize <= 0 || expectedFileSize > MAX_UPLOAD_BYTES ||
       !Array.isArray(parts) ||
-      parts.length === 0 ||
       parts.length > MAX_PARTS
     ) {
       return res.status(400).json({ error: 'Invalid completion metadata' });
@@ -390,95 +457,161 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
     const result = await requireActiveMultipartSession(userId, key, uploadId);
 
     if (result.error) {
+      if (result.error === 'INACTIVE') {
+        const completedSession = await prisma.multipartUploadSession.findUnique({
+          where: { uploadId },
+          select: { userId: true, key: true, status: true, fileName: true, fileType: true, fileSize: true },
+        });
+        if (
+          completedSession?.userId === userId &&
+          completedSession.key === key &&
+          completedSession.status === 'COMPLETED' &&
+          completedSession.fileName === fileName.trim() &&
+          completedSession.fileType === mimeType &&
+          completedSession.fileSize === BigInt(expectedFileSize)
+        ) {
+          const media = await prisma.media.findFirst({
+            where: { ownerId: userId, OR: [{ multipartUploadId: uploadId }, { publicId: key }] },
+          });
+          if (media) {
+            return res.json({
+              success: true,
+              data: { ...media, deliveryUrl: await getR2ObjectUrl(key) },
+            });
+          }
+        }
+      }
       return respondToSessionError(res, result.error);
     }
 
+    if (
+      result.session.fileName !== fileName.trim() ||
+      result.session.fileType !== mimeType ||
+      result.session.fileSize !== BigInt(expectedFileSize)
+    ) {
+      return res.status(400).json({ error: 'Completion metadata does not match the upload session' });
+    }
+
+    let alreadyCompleted = false;
     const uploadedParts = new Map<number, string>();
     let partNumberMarker: string | undefined;
     let isTruncated = true;
-    while (isTruncated) {
-      const listedParts = await getR2Client().send(new ListPartsCommand({
-        Bucket: getR2BucketName(), Key: key, UploadId: uploadId, PartNumberMarker: partNumberMarker,
-      }));
-      for (const part of listedParts.Parts || []) {
-        if (part.PartNumber && part.ETag) uploadedParts.set(part.PartNumber, part.ETag.replace(/"/g, ''));
+    try {
+      while (isTruncated) {
+        const listedParts = await getR2Client().send(new ListPartsCommand({
+          Bucket: getR2BucketName(), Key: key, UploadId: uploadId, PartNumberMarker: partNumberMarker,
+        }));
+        for (const part of listedParts.Parts || []) {
+          if (part.PartNumber && part.ETag) uploadedParts.set(part.PartNumber, part.ETag.replace(/"/g, ''));
+        }
+        isTruncated = listedParts.IsTruncated ?? false;
+        partNumberMarker = listedParts.NextPartNumberMarker;
       }
-      isTruncated = listedParts.IsTruncated ?? false;
-      partNumberMarker = listedParts.NextPartNumberMarker;
+    } catch (error) {
+      const r2Error = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (r2Error.name !== 'NoSuchUpload' && r2Error.$metadata?.httpStatusCode !== 404) throw error;
+      alreadyCompleted = true;
     }
-    const requestedPartNumbers = new Set<number>();
-    let previousPartNumber = 0;
 
-    for (const part of parts) {
-      if (
-        !Number.isSafeInteger(part?.PartNumber) ||
-        part.PartNumber < 1 ||
-        part.PartNumber > MAX_PARTS ||
-        typeof part.ETag !== 'string' ||
-        requestedPartNumbers.has(part.PartNumber) ||
-        part.PartNumber <= previousPartNumber ||
-        uploadedParts.get(part.PartNumber) !== part.ETag.replace(/"/g, '')
-      ) {
-        return res.status(400).json({
-          error: 'Multipart parts do not match the uploaded parts'
-        });
+    if (!alreadyCompleted) {
+      const requestedPartNumbers = new Set<number>();
+      let previousPartNumber = 0;
+
+      for (const part of parts) {
+        if (
+          !Number.isSafeInteger(part?.PartNumber) ||
+          part.PartNumber < 1 ||
+          part.PartNumber > MAX_PARTS ||
+          typeof part.ETag !== 'string' ||
+          requestedPartNumbers.has(part.PartNumber) ||
+          part.PartNumber <= previousPartNumber ||
+          uploadedParts.get(part.PartNumber) !== part.ETag.replace(/"/g, '')
+        ) {
+          return res.status(400).json({ error: 'Multipart parts do not match the uploaded parts' });
+        }
+
+        requestedPartNumbers.add(part.PartNumber);
+        previousPartNumber = part.PartNumber;
+      }
+      if (parts.length === 0 || requestedPartNumbers.size !== uploadedParts.size ||
+        [...requestedPartNumbers].some((number) => !uploadedParts.has(number))) {
+        return res.status(400).json({ error: 'Completion must include every uploaded part exactly once' });
       }
 
-      requestedPartNumbers.add(part.PartNumber);
-      previousPartNumber = part.PartNumber;
-    }
-    if (requestedPartNumbers.size !== uploadedParts.size ||
-      [...requestedPartNumbers].some((number) => !uploadedParts.has(number))) {
-      return res.status(400).json({
-        error: 'Completion must include every uploaded part exactly once'
-      });
-    }
+      if (parts.length > MAX_PARTS) {
+        return res.status(400).json({ error: 'Too many multipart parts' });
+      }
 
-    const MIN_PART_SIZE = 5 * 1024 * 1024; // 5 MB
-    const expectedPartCount = Math.ceil(MAX_UPLOAD_BYTES / MIN_PART_SIZE); // 10.000
-    if (parts.length > expectedPartCount) {
-      return res.status(400).json({ error: 'Too many multipart parts' });
-    }
-
-    const command = new CompleteMultipartUploadCommand({
-      Bucket: getR2BucketName(),
-      Key: key,
-      UploadId: uploadId,
-      MultipartUpload: {
-        Parts: parts.map((p: { PartNumber: number; ETag: string }) => {
-          const rawETag = p.ETag.replace(/"/g, '');
-          return {
+      const command = new CompleteMultipartUploadCommand({
+        Bucket: getR2BucketName(),
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: parts.map((p: { PartNumber: number; ETag: string }) => ({
             PartNumber: p.PartNumber,
-            ETag: `"${rawETag}"`,
-          };
-        }),
-      }
-    });
+            ETag: `"${p.ETag.replace(/"/g, '')}"`,
+          })),
+        },
+      });
 
-    await getR2Client().send(command);
+      try {
+        await getR2Client().send(command);
+      } catch (error) {
+        const r2Error = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+        if (r2Error.name !== 'NoSuchUpload' && r2Error.$metadata?.httpStatusCode !== 404) throw error;
+        alreadyCompleted = true;
+      }
+    }
 
     const head = await getR2Client().send(new HeadObjectCommand({ Bucket: getR2BucketName(), Key: key }));
     const fileSize = head.ContentLength;
-    if (typeof fileSize !== 'number' || !Number.isSafeInteger(fileSize) || fileSize !== expectedFileSize) {
-      return res.status(400).json({ error: 'Uploaded file size does not match the upload session' });
+    if (
+      typeof fileSize !== 'number' || !Number.isSafeInteger(fileSize) ||
+      fileSize !== expectedFileSize || head.ContentType !== mimeType
+    ) {
+      return res.status(400).json({ error: 'Uploaded object size or type does not match the upload session' });
     }
 
     const mediaType = mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE';
 
-    const media = await prisma.media.create({
-      data: {
-        ownerId: userId,
-        storageProvider: 'R2',
-        cloudinaryAssetId: `r2:${key}`,
-        publicId: key,
-        secureUrl: null,
-        originalFilename: fileName,
-        mimeType,
-        mediaType,
-        bytes: fileSize || 0,
-        status: 'READY',
-      },
+    let media = await prisma.media.findFirst({ where: { multipartUploadId: uploadId } });
+    media ??= await prisma.media.findFirst({
+      where: { ownerId: userId, publicId: key, storageProvider: 'R2' },
     });
+    if (media && (media.ownerId !== userId || media.publicId !== key)) {
+      return res.status(409).json({ error: 'Multipart upload is already registered to another media record' });
+    }
+
+    if (!media) {
+      try {
+        media = await prisma.media.create({
+          data: {
+            ownerId: userId,
+            storageProvider: 'R2',
+            cloudinaryAssetId: `r2:${key}`,
+            publicId: key,
+            multipartUploadId: uploadId,
+            secureUrl: null,
+            originalFilename: fileName.trim(),
+            mimeType,
+            mediaType,
+            bytes: fileSize,
+            status: 'READY',
+          },
+        });
+      } catch (error) {
+        // Concurrent completion requests may both pass the initial lookup.
+        // The unique upload ID makes the winning database insert reusable.
+        if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') throw error;
+        media = await prisma.media.findFirst({ where: { multipartUploadId: uploadId } });
+        if (!media || media.ownerId !== userId || media.publicId !== key) throw error;
+      }
+    } else if (!media.multipartUploadId) {
+      media = await prisma.media.update({
+        where: { id: media.id },
+        data: { multipartUploadId: uploadId },
+      });
+    }
 
     // the R2 object has been completed and verified, and its
     // media record has been persisted successfully.
@@ -495,14 +628,14 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
     });
 
     if (sessionUpdate.count !== 1) {
-      console.error(
-        'Media was created, but the multipart session status could not be updated',
-        { uploadId },
-      );
-
-      return res.status(409).json({
-        error: 'Media was created, but the multipart session state changed',
+      const latestSession = await prisma.multipartUploadSession.findUnique({
+        where: { uploadId },
+        select: { status: true },
       });
+      if (latestSession?.status !== 'COMPLETED') {
+        console.error('Media exists but the multipart session state changed', { uploadId });
+        return res.status(409).json({ error: 'Multipart session state changed; retry completion to recover' });
+      }
     }
 
     try {

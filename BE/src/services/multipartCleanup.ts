@@ -14,11 +14,20 @@ export async function cleanupExpiredMultipartUploads() {
 
   for (const session of sessions) {
     try {
-      await getR2Client().send(new AbortMultipartUploadCommand({
-        Bucket: getR2BucketName(),
-        Key: session.key,
-        UploadId: session.uploadId,
-      }));
+      try {
+        await getR2Client().send(new AbortMultipartUploadCommand({
+          Bucket: getR2BucketName(),
+          Key: session.key,
+          UploadId: session.uploadId,
+        }));
+      } catch (error) {
+        const r2Error = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+        // A missing R2 multipart upload is already cleaned up (for example,
+        // if another worker or an explicit abort won the race).
+        if (r2Error.name !== 'NoSuchUpload' && r2Error.$metadata?.httpStatusCode !== 404) {
+          throw error;
+        }
+      }
 
       await prisma.multipartUploadSession.updateMany({
         where: { id: session.id, status: 'ACTIVE' },
