@@ -66,12 +66,12 @@
   - [x] Completion failure recovery: Prevent duplicate media records and recover if R2 succeeds but database persistence fails.
   - [x] Abandoned-session cleanup: Expire stale sessions and abort unfinished multipart uploads.
 
-- [ ] **9.3 Media Authorization & Storage Consistency**
-  - [ ] Verify ownership checks on all media read, update, delete, and download paths.
-  - [ ] Verify private R2 variants cannot bypass application authorization.
-  - [ ] Ensure cached media cannot leak between users.
-  - [ ] Verify database, Cloudinary, and R2 cleanup behavior when deletion partially fails.
-  - [ ] Ensure media updates and deletions invalidate relevant caches.
+- [x] **9.3 Media Authorization & Storage Consistency**
+  - [x] Verify ownership checks on all media read, update, delete, and download paths.
+  - [x] Verify private R2 objects and variants cannot bypass application authorization.
+  - [x] Ensure cached media cannot leak between users.
+  - [x] Verify database, Cloudinary, and R2 cleanup behavior when deletion partially fails.
+  - [x] Ensure media updates and deletions invalidate relevant caches.
 
 - [ ] **9.4 Background Worker Reliability**
   - [ ] Configure and test BullMQ retry policies and backoff.

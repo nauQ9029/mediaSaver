@@ -1,9 +1,18 @@
 // Multi-tenant user isolation tests
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import app from '../../src/app';
 import { generateExpiredToken, generateAuthToken, createTestUser, createTestMedia } from '../helpers';
 import { prisma } from '../../src/lib/prisma';
+import jwt from 'jsonwebtoken';
+import { HeadObjectCommand } from '@aws-sdk/client-s3';
+
+const r2Mocks = vi.hoisted(() => ({ send: vi.fn(), getR2ObjectUrl: vi.fn() }));
+vi.mock('../../src/config/r2.js', () => ({
+  getR2BucketName: () => 'test-bucket',
+  getR2Client: () => ({ send: r2Mocks.send }),
+  getR2ObjectUrl: r2Mocks.getR2ObjectUrl,
+}));
 
 describe('Multi-Tenant Ownership Security Boundaries', () => {
   let userA, userB;
@@ -20,6 +29,16 @@ describe('Multi-Tenant Ownership Security Boundaries', () => {
 
     mediaUserA = await createTestMedia({ ownerId: userA.id, originalFilename: 'userA_doc.pdf' });
     mediaUserB = await createTestMedia({ ownerId: userB.id, originalFilename: 'userB_secret.png' });
+    r2Mocks.send.mockReset();
+    r2Mocks.getR2ObjectUrl.mockReset();
+  });
+
+  afterEach(async () => {
+    const ids = [userA?.id, userB?.id].filter(Boolean);
+    if (ids.length) {
+      await prisma.media.deleteMany({ where: { ownerId: { in: ids } } });
+      await prisma.user.deleteMany({ where: { id: { in: ids } } });
+    }
   });
 
   afterAll(async () => {
@@ -65,6 +84,61 @@ describe('Multi-Tenant Ownership Security Boundaries', () => {
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect([403, 404]).toContain(res.status);
+    });
+  });
+
+  describe('GET /api/media/:id/download (Cross-Tenant Download)', () => {
+    it("should prevent User A from generating a download URL for User B's media", async () => {
+      const res = await request(app)
+        .get(`/api/media/${mediaUserB.id}/download`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect([403, 404]).toContain(res.status);
+      expect(r2Mocks.getR2ObjectUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/media/:id/transform (Cross-Tenant Token)', () => {
+    it("should reject User A's transform token for User B's media", async () => {
+      const token = jwt.sign(
+        { mediaId: mediaUserB.id, purpose: 'media-image-transform' },
+        process.env.JWT_SECRET || 'test-secret',
+        { subject: userA.id, expiresIn: '15m' },
+      );
+
+      const res = await request(app)
+        .get(`/api/media/${mediaUserB.id}/transform`)
+        .query({ token });
+
+      expect(res.status).toBe(404);
+      expect(r2Mocks.send).not.toHaveBeenCalled();
+    });
+
+    it("should let User B's valid transform token redirect to a signed private variant", async () => {
+      const r2Media = await prisma.media.update({
+        where: { id: mediaUserB.id },
+        data: { storageProvider: 'R2', publicId: `vault/users/${userB.id}/original.png` },
+      });
+      const token = jwt.sign(
+        { mediaId: r2Media.id, purpose: 'media-image-transform' },
+        process.env.JWT_SECRET || 'test-secret',
+        { subject: userB.id, expiresIn: '15m' },
+      );
+      r2Mocks.send.mockImplementation(async (command) => {
+        if (command instanceof HeadObjectCommand) return {};
+        throw new Error(`Unexpected R2 command: ${command.constructor.name}`);
+      });
+      r2Mocks.getR2ObjectUrl.mockResolvedValue('https://private-r2.test/signed-variant');
+
+      const res = await request(app)
+        .get(`/api/media/${r2Media.id}/transform`)
+        .query({ token });
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('https://private-r2.test/signed-variant');
+      expect(r2Mocks.getR2ObjectUrl).toHaveBeenCalledWith(
+        `vault/users/${userB.id}/.variants/${r2Media.id}/w800-q80.webp`,
+      );
     });
   });
 });
