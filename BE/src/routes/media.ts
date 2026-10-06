@@ -302,7 +302,7 @@ router.get('/:id/download', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Delete the stored asset before removing its database record
+// Delete variants first, then the stored asset, before removing its database record.
 router.delete('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ownerId = req.user?.userId;
@@ -321,34 +321,42 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
       return res.status(410).json({ error: 'This legacy media item must be migrated to R2 before deleting' });
     }
 
-    await getR2Client().send(new DeleteObjectCommand({
-      Bucket: getR2BucketName(),
-      Key: media.publicId,
-    }));
-
-    try {
-      let continuationToken: string | undefined;
-      do {
-        const variants = await getR2Client().send(new ListObjectsV2Command({
-          Bucket: getR2BucketName(),
-          Prefix: `vault/users/${ownerId}/.variants/${media.id}/`,
-          ContinuationToken: continuationToken,
+    const r2 = getR2Client();
+    const bucket = getR2BucketName();
+    let continuationToken: string | undefined;
+    do {
+      const variants = await r2.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: `vault/users/${ownerId}/.variants/${media.id}/`,
+        ContinuationToken: continuationToken,
+      }));
+      const variantObjects = (variants.Contents || []).flatMap((object) =>
+        object.Key ? [{ Key: object.Key }] : [],
+      );
+      if (variantObjects.length) {
+        const deletion = await r2.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: variantObjects },
         }));
-        const variantObjects = (variants.Contents || []).flatMap((object) =>
-          object.Key ? [{ Key: object.Key }] : [],
-        );
-        if (variantObjects.length) {
-          await getR2Client().send(new DeleteObjectsCommand({
-            Bucket: getR2BucketName(),
-            Delete: { Objects: variantObjects, Quiet: true },
-          }));
+        if (deletion.Errors?.length) {
+          throw new Error(`R2 failed to delete ${deletion.Errors.length} transformed variant(s)`);
         }
-        continuationToken = variants.IsTruncated ? variants.NextContinuationToken : undefined;
-      } while (continuationToken);
-    } catch (variantCleanupError) {
-      console.error('Failed to clean up transformed R2 variants:', variantCleanupError);
+      }
+      continuationToken = variants.IsTruncated ? variants.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    // Confirm the prefix is empty before deleting the original. This also catches
+    // objects that were omitted from a failed or incomplete batch response.
+    const remainingVariants = await r2.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: `vault/users/${ownerId}/.variants/${media.id}/`,
+      MaxKeys: 1,
+    }));
+    if (remainingVariants.Contents?.some((object) => object.Key)) {
+      throw new Error('R2 transformed variants remain after cleanup');
     }
 
+    await r2.send(new DeleteObjectCommand({ Bucket: bucket, Key: media.publicId }));
     await prisma.media.delete({ where: { id: media.id } });
 
     // Invalidate cached gallery views for this user

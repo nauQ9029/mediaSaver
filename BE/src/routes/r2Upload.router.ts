@@ -14,6 +14,7 @@ import { uploadLimiter } from '../middleware/rateLimiter.js';
 import { prisma } from '../lib/prisma.js';
 import { getR2BucketName, getR2Client, getR2ObjectUrl } from '../config/r2.js';
 import { redis } from '../config/redis.js';
+import { enqueueMediaMetadata } from '../queues/mediaQueue.js';
 import { randomUUID } from 'crypto';
 
 const router = Router();
@@ -174,7 +175,7 @@ router.post('/r2/complete', authenticateToken, async (req: AuthRequest, res: Res
       return res.status(409).json({ error: 'Uploaded object is already registered to another user' });
     }
 
-    const media = existingMedia ?? await prisma.media.create({
+    let media = existingMedia ?? await prisma.media.create({
       data: {
         ownerId: userId,
         storageProvider: 'R2',
@@ -185,9 +186,14 @@ router.post('/r2/complete', authenticateToken, async (req: AuthRequest, res: Res
         mimeType: storedMimeType,
         mediaType,
         bytes: fileSize,
-        status: 'READY',
+        status: 'PENDING',
       },
     });
+
+    if (media.status === 'FAILED') {
+      media = await prisma.media.update({ where: { id: media.id }, data: { status: 'PENDING' } });
+    }
+    await enqueueMediaMetadata(media);
 
     try {
       const keys = await redis.keys(`cache:media:user:${userId}:*`);
@@ -470,10 +476,14 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
           completedSession.fileType === mimeType &&
           completedSession.fileSize === BigInt(expectedFileSize)
         ) {
-          const media = await prisma.media.findFirst({
+          let media = await prisma.media.findFirst({
             where: { ownerId: userId, OR: [{ multipartUploadId: uploadId }, { publicId: key }] },
           });
           if (media) {
+            if (media.status === 'FAILED') {
+              media = await prisma.media.update({ where: { id: media.id }, data: { status: 'PENDING' } });
+            }
+            await enqueueMediaMetadata(media);
             return res.json({
               success: true,
               data: { ...media, deliveryUrl: await getR2ObjectUrl(key) },
@@ -596,7 +606,7 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
             mimeType,
             mediaType,
             bytes: fileSize,
-            status: 'READY',
+            status: 'PENDING',
           },
         });
       } catch (error) {
@@ -611,6 +621,10 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
         where: { id: media.id },
         data: { multipartUploadId: uploadId },
       });
+    }
+
+    if (media.status === 'FAILED') {
+      media = await prisma.media.update({ where: { id: media.id }, data: { status: 'PENDING' } });
     }
 
     // the R2 object has been completed and verified, and its
@@ -637,6 +651,8 @@ router.post('/r2/multipart/complete', authenticateToken, async (req: AuthRequest
         return res.status(409).json({ error: 'Multipart session state changed; retry completion to recover' });
       }
     }
+
+    await enqueueMediaMetadata(media);
 
     try {
       const keys = await redis.keys(`cache:media:user:${userId}:*`);

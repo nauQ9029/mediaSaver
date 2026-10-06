@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "worker": "tsx src/workers/mediaWorker.entry.ts",
+    "worker:test-crash": "tsx tests/fixtures/crash-test-worker.js"
   },
   "keywords": [],
   "author": "nauQ9029",
@@ -30,6 +32,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "exifr": "^7.1.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "ioredis": "^6.0.0",
