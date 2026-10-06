@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     getR2ObjectUrl: vi.fn(async (key) => `https://cdn.test/${key}`),
     redisKeys: vi.fn(async () => []),
     redisDel: vi.fn(async () => 1),
+    enqueueMediaMetadata: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../src/config/r2.js', () => ({
@@ -28,6 +29,12 @@ vi.mock('../../src/config/redis.js', () => ({
         keys: mocks.redisKeys,
         del: mocks.redisDel,
     },
+}));
+
+vi.mock('../../src/queues/mediaQueue.js', () => ({
+    MEDIA_QUEUE_NAME: 'media-processing-queue',
+    MEDIA_METADATA_JOB: 'PROCESS_METADATA',
+    enqueueMediaMetadata: mocks.enqueueMediaMetadata,
 }));
 
 import app from '../../src/app';
@@ -95,6 +102,8 @@ describe('R2 multipart upload integration', () => {
         mocks.redisKeys.mockResolvedValue([]);
         mocks.redisDel.mockReset();
         mocks.redisDel.mockResolvedValue(1);
+        mocks.enqueueMediaMetadata.mockReset();
+        mocks.enqueueMediaMetadata.mockResolvedValue(undefined);
 
         // Default successful R2 behavior.
         mocks.send.mockImplementation(async (command) => {
@@ -186,6 +195,7 @@ describe('R2 multipart upload integration', () => {
         expect(res.body.data.mediaType).toBe('VIDEO');
         expect(res.body.data.bytes).toBe(fileSize);
         expect(res.body.data.ownerId).toBe(userA.id);
+        expect(res.body.data.status).toBe('PENDING');
         expect(res.body.data.deliveryUrl).toBe(
             `https://cdn.test/${key}`,
         );
@@ -208,6 +218,47 @@ describe('R2 multipart upload integration', () => {
         expect(session).not.toBeNull();
         expect(session.status).toBe('COMPLETED');
         expect(session.completedAt).toBeInstanceOf(Date);
+        expect(mocks.enqueueMediaMetadata).toHaveBeenCalledTimes(1);
+        expect(mocks.enqueueMediaMetadata).toHaveBeenCalledWith(expect.objectContaining({
+            id: expect.any(String),
+            ownerId: userA.id,
+            publicId: key,
+            status: 'PENDING',
+        }));
+    });
+
+    it('registers single-file R2 completions as PENDING and enqueues metadata work', async () => {
+        const singleKey = `vault/users/${userA.id}/single-object-key`;
+        const res = await request(app)
+            .post('/api/upload/r2/complete')
+            .set('Authorization', `Bearer ${tokenA}`)
+            .send({ key: singleKey, fileName: 'single.mp4', mimeType: 'video/mp4' });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.status).toBe('PENDING');
+        expect(mocks.enqueueMediaMetadata).toHaveBeenCalledWith(expect.objectContaining({
+            id: expect.any(String),
+            ownerId: userA.id,
+            publicId: singleKey,
+            status: 'PENDING',
+        }));
+    });
+
+    it('re-enqueues pending metadata work when a completed multipart request is retried', async () => {
+        const first = await complete();
+        expect(first.status).toBe(201);
+        const completedMediaId = first.body.data.id;
+        mocks.enqueueMediaMetadata.mockClear();
+
+        const retry = await complete();
+
+        expect(retry.status).toBe(200);
+        expect(retry.body.data.id).toBe(completedMediaId);
+        expect(mocks.enqueueMediaMetadata).toHaveBeenCalledTimes(1);
+        expect(mocks.enqueueMediaMetadata).toHaveBeenCalledWith(expect.objectContaining({
+            id: completedMediaId,
+            status: 'PENDING',
+        }));
     });
 
     it('rejects an empty parts array', async () => {

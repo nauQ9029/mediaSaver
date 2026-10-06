@@ -74,11 +74,11 @@
   - [x] Ensure media updates and deletions invalidate relevant caches.
 
 - [ ] **9.4 Background Worker Reliability**
-  - [ ] Configure and test BullMQ retry policies and backoff.
-  - [ ] Handle failed jobs and make failures observable through logs.
-  - [ ] Make processing idempotent where retries could repeat side effects.
-  - [ ] Test worker restarts and recovery of pending jobs.
-  - [ ] Prevent duplicate processing from producing inconsistent metadata or storage objects.
+  - [x] Configure three BullMQ attempts with exponential backoff and test retry/final-failure state handling.
+  - [x] Log job identity, attempt, media/user context, and errors; mark permanent/exhausted jobs failed.
+  - [x] Make metadata processing idempotent with conditional PENDING-to-READY updates and stable job IDs.
+  - [x] Test worker crashes/restarts and recovery of active or pending BullMQ jobs against Redis.
+  - [x] Test duplicate concurrent metadata processing and prevent conflicting media state updates.
 
 # Phase 10: CI/CD & Reproducible Development Environment
 - [ ] **10.1 GitHub Actions**
