@@ -73,7 +73,7 @@
   - [x] Verify database, Cloudinary, and R2 cleanup behavior when deletion partially fails.
   - [x] Ensure media updates and deletions invalidate relevant caches.
 
-- [ ] **9.4 Background Worker Reliability**
+- [x] **9.4 Background Worker Reliability**
   - [x] Configure three BullMQ attempts with exponential backoff and test retry/final-failure state handling.
   - [x] Log job identity, attempt, media/user context, and errors; mark permanent/exhausted jobs failed.
   - [x] Make metadata processing idempotent with conditional PENDING-to-READY updates and stable job IDs.
@@ -81,13 +81,13 @@
   - [x] Test duplicate concurrent metadata processing and prevent conflicting media state updates.
 
 # Phase 10: CI/CD & Reproducible Development Environment
-- [ ] **10.1 GitHub Actions**
-  - [ ] Create a GitHub Actions workflow triggered by pushes and pull requests.
-  - [ ] Run ESLint.
-  - [ ] Run TypeScript type checking with tsc --noEmit.
-  - [ ] Run Vitest unit and integration tests.
-  - [ ] Configure required checks to fail when a step fails.
-  - [ ] Provide the necessary test environment variables and service dependencies.
+- [x] **10.1 GitHub Actions**
+  - [x] Create a GitHub Actions workflow triggered by pushes and pull requests.
+  - [x] Run ESLint.
+  - [x] Run TypeScript type checking with tsc --noEmit.
+  - [x] Run Vitest unit and integration tests.
+  - [x] Configure required checks to fail when a step fails.
+  - [x] Provide the necessary test environment variables and service dependencies.
 
 - [ ] **10.2 Docker & Local Orchestration**
   - [ ] Create or finalize the backend Dockerfile.

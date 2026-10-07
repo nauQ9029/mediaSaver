@@ -1,0 +1,86 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BE
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: media_saver_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d media_saver_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/media_saver_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci_test_jwt_secret
+      REFRESH_TOKEN_SECRET: ci_test_refresh_secret
+      CLIENT_URL: http://localhost:5173
+      CLIENT_ORIGIN: http://localhost:5173
+      R2_ACCOUNT_ID: ci-test-account
+      R2_ACCESS_KEY_ID: ci-test-access-key
+      R2_SECRET_ACCESS_KEY: ci-test-secret-key
+      R2_BUCKET_NAME: media-saver-test
+      R2_PUBLIC_DOMAIN: https://example.invalid
+      CLOUDINARY_CLOUD_NAME: ci-test-cloud
+      CLOUDINARY_API_KEY: ci-test-key
+      CLOUDINARY_API_SECRET: ci-test-secret
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: BE/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run unit and integration tests
+        run: npm test

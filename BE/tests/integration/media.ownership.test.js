@@ -2,12 +2,20 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import app from '../../src/app';
-import { generateExpiredToken, generateAuthToken, createTestUser, createTestMedia } from '../helpers';
+import { generateAuthToken, createTestUser, createTestMedia } from '../helpers';
 import { prisma } from '../../src/lib/prisma';
 import jwt from 'jsonwebtoken';
 import { HeadObjectCommand } from '@aws-sdk/client-s3';
 
 const r2Mocks = vi.hoisted(() => ({ send: vi.fn(), getR2ObjectUrl: vi.fn() }));
+const redisMocks = vi.hoisted(() => ({ get: vi.fn(), setex: vi.fn() }));
+vi.mock('../../src/config/redis.js', () => ({
+  redis: {
+    get: redisMocks.get,
+    setex: redisMocks.setex,
+  },
+}));
+
 vi.mock('../../src/config/r2.js', () => ({
   getR2BucketName: () => 'test-bucket',
   getR2Client: () => ({ send: r2Mocks.send }),
@@ -16,7 +24,7 @@ vi.mock('../../src/config/r2.js', () => ({
 
 describe('Multi-Tenant Ownership Security Boundaries', () => {
   let userA, userB;
-  let tokenA, tokenB;
+  let tokenA;
   let mediaUserA, mediaUserB;
 
   beforeEach(async () => {
@@ -25,12 +33,12 @@ describe('Multi-Tenant Ownership Security Boundaries', () => {
     userB = await createTestUser();
 
     tokenA = generateAuthToken(userA.id);
-    tokenB = generateAuthToken(userB.id);
-
     mediaUserA = await createTestMedia({ ownerId: userA.id, originalFilename: 'userA_doc.pdf' });
     mediaUserB = await createTestMedia({ ownerId: userB.id, originalFilename: 'userB_secret.png' });
     r2Mocks.send.mockReset();
     r2Mocks.getR2ObjectUrl.mockReset();
+    redisMocks.get.mockReset().mockResolvedValue(null);
+    redisMocks.setex.mockReset().mockResolvedValue('OK');
   });
 
   afterEach(async () => {
