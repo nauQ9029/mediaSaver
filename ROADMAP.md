@@ -89,14 +89,14 @@
   - [x] Configure required checks to fail when a step fails.
   - [x] Provide the necessary test environment variables and service dependencies.
 
-- [ ] **10.2 Docker & Local Orchestration**
-  - [ ] Create or finalize the backend Dockerfile.
-  - [ ] Create or finalize the frontend Dockerfile.
-  - [ ] Configure Docker Compose for the application, PostgreSQL, and Redis.
-  - [ ] Configure environment variables without embedding secrets in images.
-  - [ ] Configure persistent database storage and health checks.
-  - [ ] Document Prisma migrations and database initialization.
-  - [ ] Verify the project can be started from a clean checkout using the documented steps.
+- [x] **10.2 Docker & Local Orchestration**
+  - [x] Create or finalize the backend Dockerfile.
+  - [x] Create or finalize the frontend Dockerfile.
+  - [x] Configure Docker Compose for the application, PostgreSQL, and Redis.
+  - [x] Configure environment variables without embedding secrets in images.
+  - [x] Configure persistent database storage and health checks.
+  - [x] Document Prisma migrations and database initialization.
+  - [x] Verify the project can be started from a clean checkout using the documented steps (PostgreSQL and Redis healthy, migrations exited successfully, backend healthy, frontend healthy, and worker started).
 
 - [ ] **10.3 Deployment Workflow**
   - [ ] Decide whether deployment remains manual or is triggered by a successful CI workflow.

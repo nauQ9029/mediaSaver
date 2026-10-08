@@ -208,9 +208,10 @@ router.post('/forgot-password', authLimiter, async (req: Request, res: Response)
       await sendPasswordResetEmail({ to: user.email, resetUrl });
     } catch (emailError) {
       console.error('Failed to dispatch password reset email:', emailError);
+      return res.status(503).json({
+        error: 'Password reset email is not configured. Configure GMAIL_USER and GMAIL_APP_PASSWORD, then try again.',
+      });
     }
-
-    console.log(`[DEV ONLY] Password Reset URL for ${email}: ${resetUrl}`);
 
     res.json({ message: successMessage });
   } catch (error) {
