@@ -14,8 +14,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "worker": "tsx src/workers/mediaWorker.entry.ts",
-    "worker:test-crash": "tsx tests/fixtures/crash-test-worker.js"
+    "worker": "tsx src/workers/mediaWorker.entry.ts"
   },
   "keywords": [],
   "author": "nauQ9029",

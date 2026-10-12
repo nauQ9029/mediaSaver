@@ -162,4 +162,46 @@ describe('R2 media deletion consistency', () => {
       await prisma.media.findUnique({ where: { id: media.id } }),
     ).toBeNull();
   });
+
+  it('returns 404 when another user tries to delete the media', async () => {
+    const otherUser = await createTestUser();
+    const otherToken = generateAuthToken(otherUser.id);
+
+    try {
+      const response = await request(app)
+        .delete(`/api/media/${media.id}`)
+        .set('Authorization', `Bearer ${otherToken}`);
+
+      expect(response.status).toBe(404);
+
+      // The actual owner's database record must remain.
+      expect(
+        await prisma.media.findUnique({ where: { id: media.id } }),
+      ).not.toBeNull();
+
+      // Authorization must be checked before any R2 operation.
+      expect(mocks.send).not.toHaveBeenCalled();
+    } finally {
+      await prisma.user.deleteMany({
+        where: { id: otherUser.id },
+      });
+    }
+  });
+
+  it('returns 404 when another user tries to download the media', async () => {
+    const otherUser = await createTestUser();
+    const otherToken = generateAuthToken(otherUser.id);
+
+    try {
+      const response = await request(app)
+        .get(`/api/media/${media.id}/download`)
+        .set('Authorization', `Bearer ${otherToken}`);
+
+      expect(response.status).toBe(404);
+    } finally {
+      await prisma.user.deleteMany({
+        where: { id: otherUser.id },
+      });
+    }
+  });
 });

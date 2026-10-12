@@ -46,6 +46,6 @@ RUN groupadd --system --gid 1001 app && useradd --system --uid 1001 --gid app ap
 
 USER app
 
-EXPOSE 3000
+EXPOSE 5000
 
 CMD ["node", "dist/server.js"]

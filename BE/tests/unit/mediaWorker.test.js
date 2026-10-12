@@ -72,4 +72,34 @@ describe('media metadata worker retry policy', () => {
       data: { status: 'FAILED' },
     });
   });
+
+  it('logs structured job identity, attempt count, media/user context, and error details', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    mocks.processMediaMetadata.mockRejectedValue(new Error('Corrupt header'));
+
+    await expect(processMediaJob(createJob(1))).rejects.toThrow('Corrupt header');
+
+    expect(infoSpy).toHaveBeenCalledWith('Media metadata job started', {
+      jobId: 'media-metadata-media-1',
+      jobName: 'PROCESS_METADATA',
+      attempt: 2,
+      mediaId: 'media-1',
+      ownerId: 'owner-1',
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith('Media metadata job attempt failed', {
+      jobId: 'media-metadata-media-1',
+      jobName: 'PROCESS_METADATA',
+      attempt: 2,
+      mediaId: 'media-1',
+      ownerId: 'owner-1',
+      finalAttempt: false,
+      error: 'Corrupt header',
+    });
+
+    infoSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });
