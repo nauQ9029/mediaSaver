@@ -6,7 +6,6 @@ import cookieParser from 'cookie-parser';
 import authRoutes from './routes/auth.js';
 import mediaRoutes from './routes/media.js';
 import r2UploadRoutes from './routes/r2Upload.router.js';
-import './workers/mediaWorker.js';
 
 dotenv.config();
 
@@ -24,6 +23,9 @@ for (const variable of [
 }
 
 const app = express();
+
+// Trust the single Nginx reverse-proxy hop in Docker.
+app.set('trust proxy', 1);
 
 // initialize Sentry before routes
 if (process.env.SENTRY_DSN) {

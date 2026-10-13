@@ -89,21 +89,27 @@
   - [x] Configure required checks to fail when a step fails.
   - [x] Provide the necessary test environment variables and service dependencies.
 
-- [ ] **10.2 Docker & Local Orchestration**
-  - [ ] Create or finalize the backend Dockerfile.
-  - [ ] Create or finalize the frontend Dockerfile.
-  - [ ] Configure Docker Compose for the application, PostgreSQL, and Redis.
-  - [ ] Configure environment variables without embedding secrets in images.
-  - [ ] Configure persistent database storage and health checks.
-  - [ ] Document Prisma migrations and database initialization.
-  - [ ] Verify the project can be started from a clean checkout using the documented steps.
+- [x] **10.2 Docker & Local Orchestration**
+  - [x] Create or finalize the backend Dockerfile.
+  - [x] Create or finalize the frontend Dockerfile.
+  - [x] Configure Docker Compose for the application, PostgreSQL, and Redis.
+  - [x] Configure environment variables without embedding secrets in images.
+  - [x] Configure persistent database storage and health checks.
+  - [x] Document Prisma migrations and database initialization.
+  - [x] Verify the project can be started from a clean checkout using the documented steps (PostgreSQL and Redis healthy, migrations exited successfully, backend healthy, frontend healthy, and worker started).
 
-- [ ] **10.3 Deployment Workflow**
-  - [ ] Decide whether deployment remains manual or is triggered by a successful CI workflow.
-  - [ ] Document the deployment process and required environment variables.
-  - [ ] Keep production secrets in the deployment platform or GitHub Actions secrets.
-  - [ ] Verify the deployed application after releases.
-  - [ ] Add a rollback procedure appropriate to the existing hosting setup.
+- [x] **10.3 Deployment Workflow**
+  - [x] Decided: CD is triggered automatically when the CI workflow passes on `main`; manual dispatch (`workflow_dispatch`) is also available for hotfixes. See `.github/workflows/cd.yml`.
+  - [x] Deployment process and all required environment variables are documented in `.env.example` (root) and in the CD workflow comments.
+  - [x] Production secrets (SSH key, host, deploy directory, base URL) are stored in the `production` GitHub Actions environment, not in the repository. See `.github/workflows/cd.yml`.
+  - [x] Post-release smoke tests are automated in `scripts/verify-release.sh` and run as a step in the CD workflow (`Smoke test /api/health`). Deeper verification uses the script locally with `BASE_URL`, `TEST_EMAIL`, and `TEST_PASSWORD`.
+  - [x] Rollback: `git revert` the offending commit on `main` (triggers a new CI → CD cycle) or SSH to the server, run `git checkout <previous-sha>` in the deploy directory, and re-run `docker compose up --detach`. Migrations that can safely run twice are idempotent; destructive schema changes require a separate rollback migration.
+
+> **Current milestone:** Local Docker deployment and core media lifecycle verified. Upload completion, database persistence, worker metadata processing, gallery viewing, and the tested authorization and deletion scenarios have passed.
+>
+> **10.2 & 10.3 implementation complete** — Docker orchestration, proxy configuration (`trust proxy`), the CI-gated CD workflow, deployment-secret validation, and documented rollback procedures are in place. Production deployment verification remains deferred until a production server is available.
+>
+> Remaining verification items—including the unresolved authentication assertion issue, broader authorization and deletion testing, GitHub-hosted CD workflow verification, production environment protection, and live smoke testing—are tracked in [`RELEASE_VERIFICATION.md`](./RELEASE_VERIFICATION.md).
 
 # Phase 11: Portfolio Documentation & Interview Readiness
 - [ ] **11.1 README & Architecture**

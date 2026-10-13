@@ -1,0 +1,143 @@
+name: Deploy
+
+on:
+  # Fires when "Backend CI" finishes on a commit whose branch is main.
+  # workflow_run.branches matches the branch the triggering workflow ran on,
+  # so only direct pushes to main reach this workflow automatically.
+  # The conclusion guard in check-ci below rejects any failed CI run.
+  workflow_run:
+    workflows: [Backend CI]
+    branches: [main]
+    types: [completed]
+
+  # Manual deployments are also gated by the "production" GitHub Environment.
+  # Configure required reviewers in Settings → Environments → production to
+  # prevent any contributor from bypassing approval on manual dispatches.
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Guard: only proceed when CI actually passed ────────────────────────────
+  # workflow_run fires for both success and failure conclusions; this job's
+  # condition drops the failed case so the deploy job never starts after a
+  # broken CI run.
+  check-ci:
+    name: Check CI result
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      should-deploy: ${{ steps.check.outputs.deploy }}
+    steps:
+      - name: Set deploy flag
+        id: check
+        run: echo "deploy=true" >> "$GITHUB_OUTPUT"
+
+  # ── Deploy ─────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: check-ci
+    if: needs.check-ci.outputs.should-deploy == 'true'
+    # Referencing the "production" environment enforces required-reviewer rules
+    # configured in Settings → Environments → production, and makes the secrets
+    # below available only after any required approval is granted.
+    environment: production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required deployment secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          DEPLOY_BASE_URL: ${{ secrets.DEPLOY_BASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in \
+            DEPLOY_HOST \
+            DEPLOY_USER \
+            DEPLOY_SSH_KEY \
+            DEPLOY_DIR \
+            DEPLOY_BASE_URL; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'ERROR: Missing required production secret(s): %s\n' \
+              "${missing[*]}" >&2
+            exit 1
+          fi
+
+          echo "All required deployment secrets are present."
+
+      # ── SSH into the server and redeploy ───────────────────────────────────
+      # Required secrets (Settings → Environments → production → Secrets):
+      #   DEPLOY_HOST       hostname or IP of the production server
+      #   DEPLOY_USER       SSH user that has access to Docker
+      #   DEPLOY_SSH_KEY    private key whose public half is in authorized_keys
+      #   DEPLOY_SSH_PORT   SSH port; leave empty to use the default (22)
+      #   DEPLOY_DIR        absolute path to the repo checkout on the server
+      #   DEPLOY_BASE_URL   public URL of the app, no trailing slash
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # An unset secret is an empty string in the GHA expression context,
+          # not a JS-falsy value, so `secrets.X || '22'` does not work.
+          port: ${{ secrets.DEPLOY_SSH_PORT != '' && secrets.DEPLOY_SSH_PORT || '22' }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_DIR }}"
+
+            echo "==> Pulling latest code..."
+            git pull --ff-only origin main
+
+            echo "==> Rebuilding images from source..."
+            docker compose build --pull
+
+            echo "==> Applying migrations..."
+            docker compose run --rm migrate
+
+            echo "==> Restarting services..."
+            docker compose up --detach --remove-orphans
+
+            echo "==> Deployment complete."
+
+      # ── Smoke test: confirm the stack is reachable after restart ───────────
+      - name: Smoke test /api/health
+        run: |
+          BASE_URL="${{ secrets.DEPLOY_BASE_URL }}"
+          echo "Waiting for backend at ${BASE_URL}/api/health ..."
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/health" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend is healthy (HTTP 200)."
+              exit 0
+            fi
+            echo "Attempt ${i}/12: got HTTP ${STATUS}. Retrying in 10 s..."
+            sleep 10
+          done
+          echo "ERROR: /api/health did not return 200 within 2 minutes."
+          exit 1

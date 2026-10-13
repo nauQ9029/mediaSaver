@@ -290,7 +290,9 @@ export default function App() {
             else reject(new Error(`R2 upload failed with status ${xhr.status}`));
           };
 
-          xhr.onerror = () => reject(new Error('Network error during R2 upload'));
+          xhr.onerror = () => reject(new Error(
+            'Could not reach R2. Check the bucket CORS policy for this app origin and confirm R2 credentials are configured.',
+          ));
           xhr.send(file);
         });
 
