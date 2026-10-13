@@ -105,12 +105,11 @@
   - [x] Post-release smoke tests are automated in `scripts/verify-release.sh` and run as a step in the CD workflow (`Smoke test /api/health`). Deeper verification uses the script locally with `BASE_URL`, `TEST_EMAIL`, and `TEST_PASSWORD`.
   - [x] Rollback: `git revert` the offending commit on `main` (triggers a new CI → CD cycle) or SSH to the server, run `git checkout <previous-sha>` in the deploy directory, and re-run `docker compose up --detach`. Migrations that can safely run twice are idempotent; destructive schema changes require a separate rollback migration.
 
-> **Current milestone:** Local Docker deployment & core image lifecycle verified (upload, DB persistence, worker metadata processing, and gallery viewing PASSED); CD workflow implemented; production release verification in progress.
+> **Current milestone:** Local Docker deployment and core media lifecycle verified. Upload completion, database persistence, worker metadata processing, gallery viewing, and the tested authorization and deletion scenarios have passed.
 >
-> **10.2 & 10.3 are complete** — Docker orchestration, proxy configuration (`trust proxy`), CI-gated CD workflow, GitHub Environment secrets strategy, and rollback procedures are in place.
+> **10.2 & 10.3 implementation complete** — Docker orchestration, proxy configuration (`trust proxy`), the CI-gated CD workflow, deployment-secret validation, and documented rollback procedures are in place. Production deployment verification remains deferred until a production server is available.
 >
-> Remaining verification items (cross-user isolation, storage/database deletion cleanup, automated smoke test script runner, and live server deployment) are tracked in
-> [`RELEASE_VERIFICATION.md`](./RELEASE_VERIFICATION.md).
+> Remaining verification items—including the unresolved authentication assertion issue, broader authorization and deletion testing, GitHub-hosted CD workflow verification, production environment protection, and live smoke testing—are tracked in [`RELEASE_VERIFICATION.md`](./RELEASE_VERIFICATION.md).
 
 # Phase 11: Portfolio Documentation & Interview Readiness
 - [ ] **11.1 README & Architecture**
