@@ -93,16 +93,16 @@ vault/users/cmv0siyhg000001l4quflgs1u/.variants/cmv6jbsaf000a01qi0keecv74/
 
 Run this after the above checks are complete, to confirm nothing broke.
 
-- [ ] Stop the stack: `docker compose down` (keep volumes).
-- [ ] Rebuild from source: `docker compose build --no-cache`.
-- [ ] Start fresh: `docker compose up --detach`.
-- [ ] Confirm service health:
-  - [ ] `postgres` → healthy
-  - [ ] `redis` → healthy
-  - [ ] `migrate` → exited 0
-  - [ ] `backend` → healthy
-  - [ ] `frontend` → healthy
-  - [ ] `worker` → running (no immediate crash)
+- [x] Stop the stack: `docker compose down` (keep volumes).
+- [x] Rebuild from source: `docker compose build --no-cache`.
+- [x] Start fresh: `docker compose up --detach`.
+- [x] Confirm service health:
+  - [x] `postgres` → healthy
+  - [x] `redis` → healthy
+  - [x] `migrate` → exited 0
+  - [x] `backend` → healthy
+  - [x] `frontend` → healthy
+  - [x] `worker` → running (no immediate crash)
 
 ---
 
