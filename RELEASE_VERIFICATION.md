@@ -146,11 +146,20 @@ Run only after a production server is available.
 |---|---|---|
 | Service startup & health | ✅ Passed | Containers healthy; PostgreSQL & Redis healthy |
 | Database persistence | ✅ Passed | Account and media records persisted across operations |
-| Upload completion & proxy | ✅ Passed | Trust proxy updated; `/api/upload/r2/complete` 200 OK |
-| Worker processing | ✅ Passed | Jobs processed; media records reached `READY` |
+| Upload completion & proxy | ✅ Passed | Trust proxy updated; `/api/upload/r2/complete` returned 200 OK |
+| Worker processing | ✅ Passed | Jobs processed; media records reached READY; retry and recovery paths verified |
 | Gallery & viewing | ✅ Passed | Image viewing and delivery URL confirmed manually |
-| Authentication assertion | ⚠️ Partial | Script response capture/assertion fix for automated runner |
-| Authorization/deletion | ❓ Unverified | Cross-user isolation and cleanup tests |
-| Clean startup | ✅ Previously passed | Core images build & start successfully |
-| CD safeguards | ⚠️ Partial | Required-reviewer rule to be configured on GitHub |
-| Production smoke test | ❓ Not started | Needs deployed production target |
+| Authentication assertion | ⚠️ Partial | Local verification script passed; original assertion issue and response-capture fix remain unresolved |
+| Authorization/deletion | ✅ Passed for tested cases | Cross-user requests returned 404; owner deletion removed the database record, original R2 object, and variants for one disposable image |
+| Clean startup | ✅ Passed | Rebuilt from source and confirmed service health while preserving Docker volumes |
+| CD safeguards | ✅ Implemented; production safeguards deferred | Workflow configured with CI-success gating and required-secret validation; production environment protection and failure behavior not fully tested |
+| Production smoke test | ⏸️ Deferred | No production server or public deployment target; revisit when deployment is available |
+
+## Scope and limitations
+- Local Docker Compose startup, upload completion, worker processing, authorization, and one owner-deletion scenario have been verified.
+- The authentication assertion issue remains partially unresolved despite the local verification script passing.
+- The CD workflow is implemented, but its behavior has not been fully verified through GitHub-hosted deployment runs.
+- Production environment approval, deployment-secret configuration, and live smoke testing are deferred until a production server is available.
+- No Docker volumes or database data were intentionally removed as part of this verification process.
+
+**Release verification decision:** Local development and integration checks are substantially complete for the tested scenarios. Phase 10 production deployment verification remains deferred.
