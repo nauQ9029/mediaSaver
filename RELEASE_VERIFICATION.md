@@ -56,21 +56,37 @@ Verified on October 12, 2026:
 
 ---
 
-## 4 — Authorization and deletion (unverified)
+## 4 — Authorization and deletion (pased)
 
-- [ ] Register a second test user (User B).
-- [ ] Attempt to `GET /api/media/:id` with User B's token where `:id` belongs
+Verified on October 13, 2026 on local Docker Compose stack:
+
+- [x] Register a second test user (User B).
+- [x] Attempt to `GET /api/media/:id/download` with User B's token where `:id` belongs
   to User A. Expect `404`.
-- [ ] Attempt to `DELETE /api/media/:id` with User B's token. Expect `404`.
-- [ ] Delete a media item as its owner (User A).
-- [ ] Confirm the database row is gone:
+- [x] Attempt to `DELETE /api/media/:id` with User B's token. Expect `404`.
+- [x] Delete a media item as its owner (User A).
+- [x] Confirm the database row is gone:
   ```sql
   SELECT id FROM "Media" WHERE id = '<deleted-id>';
-  -- Must return zero rows.
+  -- Must return zero rows. - It did.
   ```
-- [ ] Confirm the R2 object and all variants under
+- [x] Confirm the R2 object and all variants under
   `vault/users/<ownerId>/.variants/<mediaId>/` are removed from the bucket.
 
+**Test media:** delete-test.png (disposable test upload)
+
+**Media ID:** cmv6jbsaf000a01qi0keecv74
+**Owner (User A):** cmv0siyhg000001l4quflgs1u
+
+**R2 original key checked:**
+vault/users/cmv0siyhg000001l4quflgs1u/4b194175-8c2e-4af9-9f5c-51bf04f4648c
+
+**R2 variants prefix checked:**
+vault/users/cmv0siyhg000001l4quflgs1u/.variants/cmv6jbsaf000a01qi0keecv74/
+
+**Outcome:** passed for the tested cases — database record, original object, and variants were absent after owner deletion.
+
+**Scope limitation:** This verifies the deletion path for one disposable image. It does not independently verify all partial-failure scenarios or every media type.
 ---
 
 ## 5 — Clean startup (previously passed; recheck after any image change)
