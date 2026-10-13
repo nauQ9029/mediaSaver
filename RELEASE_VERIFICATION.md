@@ -108,12 +108,11 @@ Run this after the above checks are complete, to confirm nothing broke.
 
 ## 6 — CD workflow safeguard verification
 
-- [ ] Confirm `workflow_run.branches: [main]` in
-  [`.github/workflows/cd.yml`](file:///d:/Works/learning/mediaSaver/.github/workflows/cd.yml)
+- [x] Confirm `workflow_run.branches: [main]` in
+  [`.github/workflows/cd.yml`](.github/workflows/cd.yml)
   limits automatic triggers to pushes on `main` (not PRs from other branches).
-- [ ] Confirm the `check-ci` job condition drops the workflow when
-  `conclusion != 'success'` (push a commit that intentionally fails CI and
-  observe no deployment).
+- [ ] Verify failed CI cannot deploy by intentionally failing CI and
+  observing that the deployment job does not run.
 - [ ] Configure required reviewers on the `production` GitHub Environment
   (Settings → Environments → production → Required reviewers) so that
   `workflow_dispatch` cannot bypass human approval.

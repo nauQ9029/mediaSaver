@@ -59,6 +59,37 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Validate required deployment secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          DEPLOY_BASE_URL: ${{ secrets.DEPLOY_BASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in \
+            DEPLOY_HOST \
+            DEPLOY_USER \
+            DEPLOY_SSH_KEY \
+            DEPLOY_DIR \
+            DEPLOY_BASE_URL; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'ERROR: Missing required production secret(s): %s\n' \
+              "${missing[*]}" >&2
+            exit 1
+          fi
+
+          echo "All required deployment secrets are present."
+
       # ── SSH into the server and redeploy ───────────────────────────────────
       # Required secrets (Settings → Environments → production → Secrets):
       #   DEPLOY_HOST       hostname or IP of the production server
