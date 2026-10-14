@@ -44,11 +44,7 @@ export default function MediaViewer({ item, deleting, onClose, onDelete, onUpdat
         originalFilename: filename.trim() 
       });
 
-      // 1. Immediately sync local component state
       setFilename(updated.originalFilename || filename.trim());
-      item.originalFilename = updated.originalFilename || filename.trim();
-
-      // 2. Safely notify parent component if callback exists
       onUpdateSuccess?.(updated);
       setIsEditing(false);
     } catch (err) {
