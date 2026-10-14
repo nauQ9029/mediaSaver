@@ -25,10 +25,18 @@ import {
 } from './utils/uploadContinuity';
 
 export default function App() {
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPasswordPage onComplete={() => (window.location.href = '/')} />;
+  }
+
+  return <MediaVault />;
+}
+
+function MediaVault() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('media-saver-theme') || 'dark');
   const [status, setStatus] = useState('Checking connection…');
   const [user, setUser] = useState(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const isResetPath = window.location.pathname === '/reset-password';
 
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
@@ -47,6 +55,22 @@ export default function App() {
   const cancelRequested = useRef(false);
   const [deleting, setDeleting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [mediaFilter, setMediaFilter] = useState('all');
+
+  const imageCount = items.filter((item) => item.mediaType === 'IMAGE').length;
+  const videoCount = items.filter((item) => item.mediaType === 'VIDEO').length;
+  const storageBytes = items.reduce((total, item) => total + (item.bytes || 0), 0);
+  const filteredItems = items.filter((item) => {
+    const matchesType = mediaFilter === 'all' || item.mediaType === mediaFilter;
+    const matchesSearch = (item.originalFilename || '').toLowerCase().includes(searchQuery.trim().toLowerCase());
+    return matchesType && matchesSearch;
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('media-saver-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     apiClient
@@ -73,10 +97,6 @@ export default function App() {
     setItems([]);
     setNextCursor(null);
   };
-
-  if (isResetPath) {
-    return <ResetPasswordPage onComplete={() => (window.location.href = '/')} />;
-  }
 
   const handleLogout = async () => {
     await abortActiveMultipartUploads();
@@ -434,7 +454,7 @@ export default function App() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100">
+    <main className="app-shell min-h-screen px-5 py-8 text-slate-100 sm:px-8 sm:py-10">
       <div className="mx-auto max-w-6xl">
         <Header
           user={user}
@@ -446,10 +466,12 @@ export default function App() {
           onFileUpload={handleFileUpload}
           onLoginClick={() => setIsAuthOpen(true)}
           onLogout={handleLogout}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
         />
 
         {uploading && uploadProgress > 0 && (
-          <div className="my-4 rounded-lg bg-slate-900 p-4 border border-slate-800">
+          <div className="surface-card my-4 rounded-xl p-4">
             <div className="flex justify-between text-xs text-slate-300 mb-1 font-medium">
               <span>{uploadError || `Uploading ${uploadName || 'media'} directly to R2...`}</span>
               <span>{uploadProgress}%</span>
@@ -464,7 +486,7 @@ export default function App() {
         )}
 
         {uploading && (
-          <div className="my-4 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <div className="surface-card my-4 flex items-center justify-between rounded-xl p-4">
             <span className="text-sm text-slate-300">{uploadError || `Upload in progress: ${uploadName}`}</span>
           </div>
         )}
@@ -508,10 +530,11 @@ export default function App() {
         )}
 
         {!user && (
-          <section className="text-center py-20 bg-slate-900 border border-slate-800 rounded-2xl p-8 my-8">
-            <h2 className="text-2xl font-bold">Your Private Media Vault</h2>
-            <p className="text-sm text-slate-400 mt-2 max-w-md mx-auto">
-              Sign in or create an account to start uploading images and videos directly to your isolated cloud library.
+          <section className="surface-card my-10 rounded-2xl px-6 py-16 text-center sm:px-12">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-500">A quieter place for your media</p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Your library, all in one place.</h2>
+            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-400">
+              Keep your photos and videos together in a private cloud library that is yours to browse and manage.
             </p>
             <button
               onClick={() => setIsAuthOpen(true)}
@@ -523,9 +546,46 @@ export default function App() {
         )}
 
         {user && (
-          <section className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {items.map((item, index) => {
-              const isLast = items.length === index + 1;
+          <>
+            <section className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="surface-card rounded-xl p-4 sm:p-5">
+                <p className="text-xs font-medium text-slate-400">Library items</p>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">{items.length}</p>
+              </div>
+              <div className="surface-card rounded-xl p-4 sm:p-5">
+                <p className="text-xs font-medium text-slate-400">Images</p>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">{imageCount}</p>
+              </div>
+              <div className="surface-card rounded-xl p-4 sm:p-5">
+                <p className="text-xs font-medium text-slate-400">Videos</p>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">{videoCount}</p>
+              </div>
+              <div className="surface-card rounded-xl p-4 sm:p-5">
+                <p className="text-xs font-medium text-slate-400">Storage used</p>
+                <p className="mt-2 text-2xl font-semibold tracking-tight">{storageBytes >= 1024 ** 3 ? `${(storageBytes / 1024 ** 3).toFixed(1)} GB` : `${(storageBytes / 1024 ** 2).toFixed(1)} MB`}</p>
+              </div>
+            </section>
+
+            <section className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">Your collection</p>
+                <h2 className="mt-1 text-xl font-semibold tracking-tight">Recent media</h2>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <label className="sr-only" htmlFor="media-search">Search files</label>
+                <input id="media-search" type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search files" className="surface-muted min-w-52 rounded-lg px-3 py-2 text-sm outline-none placeholder:text-slate-500 focus:border-sky-500" />
+                <label className="sr-only" htmlFor="media-filter">Filter media type</label>
+                <select id="media-filter" value={mediaFilter} onChange={(event) => setMediaFilter(event.target.value)} className="surface-muted rounded-lg px-3 py-2 text-sm text-slate-300 outline-none focus:border-sky-500">
+                  <option value="all">All media</option>
+                  <option value="IMAGE">Images</option>
+                  <option value="VIDEO">Videos</option>
+                </select>
+              </div>
+            </section>
+
+            {filteredItems.length ? <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 md:grid-cols-4">
+            {filteredItems.map((item) => {
+              const isLast = items[items.length - 1]?.id === item.id;
               return (
                 <MediaCard
                   key={item.id}
@@ -536,7 +596,16 @@ export default function App() {
                 />
               );
             })}
-          </section>
+            </section> : items.length === 0 ? <div className="surface-card rounded-xl px-6 py-12 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-xl text-slate-300">＋</div>
+              <p className="mt-4 font-medium">Your library is ready</p>
+              <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-slate-400">Upload a photo or video to start building your collection.</p>
+              <button type="button" onClick={handleChooseUpload} className="mt-5 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400">Upload your first file</button>
+            </div> : <div className="surface-card rounded-xl px-6 py-12 text-center">
+              <p className="font-medium">No matching media</p>
+              <p className="mt-1 text-sm text-slate-400">Try another name or filter.</p>
+            </div>}
+          </>
         )}
 
         {loading && (
@@ -556,6 +625,12 @@ export default function App() {
         deleting={deleting}
         onClose={() => setSelectedMedia(null)}
         onDelete={handleDeleteMedia}
+        onUpdateSuccess={(updated) => {
+          setItems((previous) => previous.map((media) => (
+            media.id === updated.id ? updated : media
+          )));
+          setSelectedMedia(updated);
+        }}
       />
     </main>
   );
