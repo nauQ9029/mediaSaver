@@ -1,19 +1,23 @@
 import React from 'react';
 
-export default function Header({ user, status, uploading, onFileUpload, onChooseUpload, onCancelUpload, onLoginClick, onLogout }) {
+export default function Header({ user, status, uploading, onFileUpload, onChooseUpload, onCancelUpload, onLoginClick, onLogout, theme = 'dark', onToggleTheme }) {
   return (
     <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6 mb-8">
       <div>
-        <p className="text-xs font-semibold tracking-[0.2em] text-sky-400 uppercase">Media Saver</p>
-        <h1 className="text-3xl font-bold tracking-tight mt-1">Personal Cloud Vault</h1>
+        <p className="text-xs font-semibold tracking-[0.18em] text-sky-500 uppercase">Media Saver</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Personal Cloud Vault</h1>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         {/* Connection Indicator */}
-        <div className="inline-flex items-center gap-2 rounded-full bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs">
+        <div className="surface-muted inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs">
           <span className={`h-2 w-2 rounded-full ${status.includes('Unable') ? 'bg-rose-500' : 'bg-emerald-400'}`} />
           <span className="text-slate-300">{status}</span>
         </div>
+
+        <button type="button" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} className="surface-muted inline-flex h-9 w-9 items-center justify-center rounded-full text-sm transition hover:scale-105">
+          {theme === 'dark' ? '☼' : '◐'}
+        </button>
 
         {user ? (
           <>
