@@ -106,25 +106,45 @@ Run this after the above checks are complete, to confirm nothing broke.
 
 ---
 
-## 6 — CD workflow safeguard verification
+## 6 � CD workflow safeguard verification
 
 - [x] Confirm `workflow_run.branches: [main]` in
   [`.github/workflows/cd.yml`](.github/workflows/cd.yml)
   limits automatic triggers to pushes on `main` (not PRs from other branches).
-- [ ] Verify failed CI cannot deploy by intentionally failing CI and
-  observing that the deployment job does not run.
+- [x] Review the workflow's failed-CI guard: `check-ci` runs for
+  `workflow_run` only when the triggering CI conclusion is `success`, and the
+  deploy job requires its output. This is source review, not a GitHub-hosted
+  execution test.
+- [ ] Verify failed CI cannot deploy in GitHub by intentionally failing CI and
+  observing that the deployment job does not run. This can be tested without a
+  deployment server, but requires repository Actions access.
 - [ ] Configure required reviewers on the `production` GitHub Environment
-  (Settings → Environments → production → Required reviewers) so that
-  `workflow_dispatch` cannot bypass human approval.
-- [ ] Add at least one secret to the `production` environment and confirm the
-  deploy job fails with a clear error if the secret is missing (rather than
-  silently deploying with a blank value).
+  (Settings ? Environments ? production ? Required reviewers) so that
+  `workflow_dispatch` cannot bypass human approval. This settings task does not
+  require a deployment server.
+- [x] Confirm missing required secrets fail clearly before SSH. A GitHub-hosted
+  deploy run reported `DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_DIR` and
+  `DEPLOY_BASE_URL` missing, then exited with code 1. No deployment server is
+  needed to verify this validation path.
+
+**Deployment target note:** The current CD workflow deploys by SSH to a host
+running Docker Compose. A Vercel-only setup does not provide that target for
+this workflow. Defer SSH deployment and live smoke-test items until a
+compatible host is available, or replace the deploy job with one designed for
+the chosen provider. The GitHub-side CI gate and reviewer settings can be
+verified independently of a server.
 
 ---
+## 7 � End-to-end smoke test against the deployed target
 
-## 7 — End-to-end smoke test against the deployed target
+**Status: deferred � no compatible production host is available.** The current
+CD workflow deploys over SSH to a Docker Compose server; a Vercel-only setup is
+not a target for this workflow. No live deployment or smoke-test result is
+claimed. This section does not block proceeding to Phase 11 (Portfolio
+Documentation & Interview Readiness); return here when a compatible host is
+available, or after adapting CD to the selected provider.
 
-Run only after a production server is available.
+When a target is available:
 
 - [ ] Set `DEPLOY_BASE_URL` in the `production` GitHub Environment.
 - [ ] Trigger the CD workflow manually (or push to `main`).
@@ -139,7 +159,6 @@ Run only after a production server is available.
 - [ ] Record pass/fail for all seven checks in the script output.
 
 ---
-
 ## Status summary
  
 | Check | Status | Evidence / Notes |
@@ -152,14 +171,14 @@ Run only after a production server is available.
 | Authentication assertion | ⚠️ Partial | Local verification script passed; original assertion issue and response-capture fix remain unresolved |
 | Authorization/deletion | ✅ Passed for tested cases | Cross-user requests returned 404; owner deletion removed the database record, original R2 object, and variants for one disposable image |
 | Clean startup | ✅ Passed | Rebuilt from source and confirmed service health while preserving Docker volumes |
-| CD safeguards | ✅ Implemented; production safeguards deferred | Workflow configured with CI-success gating and required-secret validation; production environment protection and failure behavior not fully tested |
-| Production smoke test | ⏸️ Deferred | No production server or public deployment target; revisit when deployment is available |
+| CD safeguards | ?? Implemented; partly source-reviewed | CI-success gating and required-secret validation are present. GitHub-hosted failed-CI gate execution and environment reviewers remain to verify. Missing-secret validation was confirmed by a run that listed all five absent secrets and exited with code 1; no SSH deployment host is available. |
+| Production smoke test | ?? Deferred | No compatible production host or public deployment target; revisit when deployment is available |
 
 ## Scope and limitations
 - Local Docker Compose startup, upload completion, worker processing, authorization, and one owner-deletion scenario have been verified.
 - The authentication assertion issue remains partially unresolved despite the local verification script passing.
-- The CD workflow is implemented, but its behavior has not been fully verified through GitHub-hosted deployment runs.
-- Production environment approval, deployment-secret configuration, and live smoke testing are deferred until a production server is available.
+- The CD workflow targets an SSH-accessible Docker Compose host. GitHub-hosted CI-gate behavior and production environment reviewers remain to verify; these checks do not require a server. Missing-secret validation passed as recorded in section 6.
+- SSH deployment and live smoke testing are deferred until a compatible production host is available. A Vercel-only setup is not compatible with the current deploy job.
 - No Docker volumes or database data were intentionally removed as part of this verification process.
 
-**Release verification decision:** Local development and integration checks are substantially complete for the tested scenarios. Phase 10 production deployment verification remains deferred.
+**Release verification decision:** Local verification is substantially complete for the scenarios recorded above. Proceed to Phase 11 (Portfolio Documentation & Interview Readiness). Production deployment verification, including section 7, remains explicitly deferred until a compatible host is available; this is not a live-production sign-off.
